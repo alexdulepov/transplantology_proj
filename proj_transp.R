@@ -269,7 +269,7 @@ ctrl <- trainControl(
 set.seed(42)
 loocv_fit <- train(
   y= y_train, 
-  x= x_train[,c("if_ng_26"), drop = FALSE],
+  x= x_train[,c("if_ng_26","il_12_p40_43"), drop = FALSE],
   method      = "glm",
   family      = binomial,
   trControl   = ctrl,
