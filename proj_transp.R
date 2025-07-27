@@ -13,6 +13,7 @@ library(janitor)
 library(car)
 library(tidymodels)
 library(olsrr)
+library(pROC)
 set.seed(1234)
 
 # Read xlsx and recode the outcome
@@ -88,6 +89,10 @@ y_train <- df_imp_1 %>%
          labels = c("No", "Yes"))
 
 x1 = df_imp_1 %>%
+  select(age,time_tr,if_ng_26, il_12_p40_43, tn_fb_77, mip_1b_67, tn_fa_76) %>%
+  cor()
+
+x2 = x_train %>%
   select(age,time_tr,if_ng_26, il_12_p40_43, tn_fb_77, mip_1b_67, tn_fa_76) %>%
   cor()
   
@@ -212,7 +217,7 @@ mod_rfor = cforest(ptsd ~ ., data = avengers)
 compare.fits(ptsd ~ strength , data =avengers, mod_rfor)
 
 
-glm_mod = glm(outcome~if_ng_26+il_12_p40_43+mip_1b_67+tn_fa_76, data = df_imp_1[,c(2:length(df_imp_1))],family = "binomial")
+glm_mod = glm(outcome~if_ng_26+il_12_p40_43, data = df_imp_1[,c(2:length(df_imp_1))],family = "binomial")
 summary(glm_mod)
 exp(coef(glm_mod))
 vif(glm_mod) # Variance inflation factor, no multicollinearity
@@ -266,17 +271,27 @@ ctrl <- trainControl(
   summaryFunction = twoClassSummary 
 )
 
+trctrl <- trainControl(method = "boot632",number=10000,
+                       returnResamp="all", savePredictions = "final",   # <-- keeps every hold‑out prediction
+                       classProbs      = TRUE,
+                       summaryFunction = twoClassSummary)
+
 set.seed(42)
 loocv_fit <- train(
   y= y_train, 
   x= x_train[,c("if_ng_26","il_12_p40_43"), drop = FALSE],
   method      = "glm",
   family      = binomial,
-  trControl   = ctrl,
+  trControl   = trctrl,
   metric     = "ROC"
 )
 
 #sens 0.833 with 2 var
+#1 var - more stable, but less precise
+#2 var - les stable , but more precise
+
+#bootstrap with 2 var : sens = 0.71, spec =0.897, ROC = 0.798, PPV=0.72,NPV=0.89, bal.Ac = 0.81 (10000 samples enough)
+#bootstrap with 1 var : sens = 0.67, spec =0.91, ROC = 0.790, PPV=0.737,NPV=0.88, bal.Ac = 0.79
 
 loocv_fit$results
 outcomes <- table(loocv_fit$pred$pred, loocv_fit$pred$obs)
@@ -296,7 +311,113 @@ rocCurve <- pROC::roc(
   predictor = loocv_fit$pred$Yes    # numeric: P(class = "Yes")
 )
 plot(rocCurve, print.auc = TRUE)
-coords(rocCurve, "best", ret = c("threshold", "sensitivity", "specificity"))
+plot(x1, print.auc = TRUE) #1 var
+plot(x2, print.auc = TRUE) #2 var
+pROC::coords(rocCurve, "best", ret = c("threshold", "sensitivity", "specificity"))
+
+###
+# choose the cut-off threshold based on the ROC curve
+
+# 1) Build the ROC (make sure the positive class is correct)
+rocCurve <- roc(
+  response  = loocv_fit$pred$obs,     # factor with levels c("No","Yes")
+  predictor = loocv_fit$pred$Yes,     # P(class == "Yes")
+  levels = c("No","Yes"),             # ensure "Yes" is the positive class
+  direction = "<"                     # higher prob -> "Yes"
+)
+
+# 2) Get the best threshold (Youden’s J or closest-to-(0,1))
+best <- coords(
+  rocCurve,
+  x = "best",
+  best.method = "youden",             # or "closest.topleft"
+  ret = c("threshold","sensitivity","specificity"),
+  transpose = FALSE                   # returns a named vector
+)
+
+best_threshold <- best["threshold"]
+best_threshold #0.22
+thr90sens <- pROC::coords(rocCurve, x = 0.80, input = "sensitivity", ret = "threshold")
+thr95spec <- pROC::coords(rocCurve, x = 0.85, input = "specificity", ret = "threshold")
+
+### pr-recall
+library(precrec)
+
+scores <- loocv_fit$pred$Yes
+labels <- loocv_fit$pred$obs  # factor with "No"/"Yes"
+
+mmod <- evalmod(scores = scores,
+                labels = labels,
+                posclass = "Yes")   # <-- not 'positive'
+# includes AUPRC and AUROC
+autoplot(mmod, "PRC") + ggtitle("Precision–Recall")
+autoplot(mmod, "ROC") + ggtitle("ROC")
+ap_df <- auc(mmod)                        # AUCs for both ROC and PR
+auprc <- subset(ap_df, curvetypes == "PRC")$aucs
+auprc
+
+# using your objects
+scores <- loocv_fit$pred$Yes
+labels <- factor(loocv_fit$pred$obs, levels = c("No","Yes"))
+
+prevalence <- mean(labels == "Yes")   # PR baseline
+auprc <- 0.61                          # your PR AUC
+roc_auc <- 0.79                        # your ROC AUC
+
+# "Lift" over baseline, scaled to [0,1]
+pr_lift <- (auprc - prevalence) / (1 - prevalence)
+prevalence; pr_lift
+
+#Prevalence ≈ 0.271 → a random classifier’s baseline AUPRC ≈ 0.271.
+
+#Your AUPRC = 0.61 → +0.339 absolute above baseline, or about 2.25× the baseline (0.61 / 0.271).
+
+#pr_lift = 0.465 → you’re 46.5% of the way from random to perfect in PR space (where 0 = baseline, 1 = perfect).
+
+#ROC AUC = 0.79 looks higher because ROC is less sensitive to class imbalance; with ~27% positives, it’s normal for AUPRC to be notably lower than ROC AUC.
+
+library(dplyr); library(yardstick); library(ggplot2)
+
+df <- loocv_fit$pred %>%
+  transmute(truth = factor(obs, levels = c("No","Yes")),
+            score = Yes)
+
+pr <- pr_curve(df, truth, score, event_level = "second")
+
+best <- pr %>%
+  mutate(F1 = 2*precision*recall/(precision+recall)) %>%
+  filter(!is.na(F1)) %>% slice_max(F1, n = 1)
+
+best$.threshold; best$precision; best$recall #best threshold is 0.42 based on F1 score
+
+#Plot the PR curve + annotate baseline and the chosen point
+#The dashed horizontal line is the prevalence (= baseline precision of a random classifier).
+
+#The point marks your best‑F1 operating point (recall, precision) on the curve.
+
+autoplot(pr) +
+  geom_hline(yintercept = mean(df$truth == "Yes"), linetype = 2) +
+  geom_point(aes(x = best$recall, y = best$precision))
+
+#Uncertainty
+library(precrec)
+
+set.seed(1)
+B <- 2000
+n <- nrow(df)
+ap <- roc <- numeric(B)
+
+for (b in 1:B) {
+  i <- sample.int(n, n, replace = TRUE)
+  m <- evalmod(scores = df$score[i], labels = df$truth[i], posclass = "Yes")
+  ap[b]  <- subset(auc(m),  curvetypes == "PRC")$aucs
+  roc[b] <- subset(auc(m),  curvetypes == "ROC")$aucs
+}
+
+quantile(ap,  c(.025, .5, .975))   # AUPRC CI
+quantile(roc, c(.025, .5, .975))   # ROC AUC CI
+
+
 
 #roc for if_ng_26 + il_12_p40_43 = 0.781 , but sens is higher, however 2 times were convergence issue
 #roc for if_ng_26 = 0.823
