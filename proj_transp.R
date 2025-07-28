@@ -14,6 +14,7 @@ library(car)
 library(tidymodels)
 library(olsrr)
 library(pROC)
+library(precrec)
 set.seed(1234)
 
 # Read xlsx and recode the outcome
@@ -258,23 +259,18 @@ summary(confusion, event_level = "second")
 
 
 ####LOOCV
-library(caret)
-
-df_imp_0$outcome <- factor(df_imp_0$outcome,
-                           levels = c(0, 1),
-                           labels = c("No", "Yes"))
 
 ctrl <- trainControl(
   method          = "LOOCV",
   savePredictions = "final",   # <-- keeps every hold‑out prediction
   classProbs      = TRUE,
-  summaryFunction = twoClassSummary 
+  summaryFunction = twoClassSummary
 )
 
-trctrl <- trainControl(method = "boot632",number=10000,
+trctrl <- trainControl(method = "boot",number=10000,
                        returnResamp="all", savePredictions = "final",   # <-- keeps every hold‑out prediction
                        classProbs      = TRUE,
-                       summaryFunction = twoClassSummary)
+                       summaryFunction = prSummary)
 
 set.seed(42)
 loocv_fit <- train(
@@ -283,8 +279,19 @@ loocv_fit <- train(
   method      = "glm",
   family      = binomial,
   trControl   = trctrl,
-  metric     = "ROC"
+  metric     = "AUC"
 )
+
+loocv_fit <- train(
+  y= y_train, 
+  x= x_train[,c("if_ng_26","il_12_p40_43"), drop = FALSE],
+  method      = "glm",
+  family      = binomial,
+  trControl   = ctrl,
+  metric     = "AUC"
+)
+
+x <- evalm(list(loocv_fit,loocv_fit_2))
 
 #sens 0.833 with 2 var
 #1 var - more stable, but less precise
@@ -400,7 +407,7 @@ autoplot(pr) +
   geom_point(aes(x = best$recall, y = best$precision))
 
 #Uncertainty
-library(precrec)
+
 
 set.seed(1)
 B <- 2000
