@@ -70,6 +70,7 @@ df_imp_1 = df_imp_0 %>%
 #dont delete observation 2 because this is the only one female among cases and you will get the separation issue,
 #however this observation is an outlier(low value of if while being rejected), so you can keep it for sensitivity analysis
 
+#COMPARE PREDICTION PERFORMANCE WITH AND WITHOUT TRANSFORMED DATA!!!!!!!!!!!
 x_train = df_imp_1 %>%
   select(3:length(df_imp)) %>%
   mutate(
@@ -141,69 +142,29 @@ pheatmap(
   main = "Correlation Heatmap"
 )
 
-############ ELASTIC NET REGRESSION
-set.seed(42)
-
-x <- x_train  # design matrix
-y <- as.numeric(y_train)-1  # response vector
-
-# Cross‑validate over both λ and α
-alphas <- seq(0, 1, length = 100)                  # 0, 0.1, …, 1
-cv_list <- lapply(alphas, function(a)
-  cv.glmnet(x, y, alpha = a, nfolds = 22, standardize = F, type.measure = "class"))
-
-# Pick the alpha with the lowest CV error
-cv_means <- sapply(cv_list, function(z) min(z$cvm))
-best_a   <- alphas[ which.min(cv_means) ]
-best_fit <- cv_list[[ which.min(cv_means) ]]
-
-coef(best_fit, s = "lambda.min")  # coefficients at the best λ
-
-
-#mip_1b_67, if_ng_26, tn_fb_77           
-
-
-###
-    # only needed for ggplot variant, optional
-
-## ---------------- 1.  coefficient paths ----------------
-## Re‑fit one glmnet model at the chosen alpha so we get
-## every λ along the path (cv.glmnet keeps it too, but this
-## makes the call explicit and lets us plot all variables).
-
-fit_path <- glmnet(
-  x, y,
-  alpha       = best_a,          # <‑‑ winner from your CV loop
-  family      = "binomial",
-  standardize = TRUE
-)
-
-# Base‑graphics quick plot (built‑in to glmnet):
-plot(fit_path, xvar = "lambda", label = TRUE)   # label names on right margin
-abline(v = log(best_fit$lambda.min), lty = 2, col = "red")  # CV‑chosen λ
-title(main = sprintf("Elastic‑net coefficient paths (alpha = %.2f)", best_a))
-
-set.seed(1234)
-
-###################################VSURF
+##################################################VSURF##########################################################################
 
 vsurf_model = VSURF(y=y_train, x=x_train, ntree.thres = 10000,nfor.thres = 100, 
                     ntree.interp = 10000, nfor.interp=100, 
                     ntree.pred = 10000, nfor.pred = 100,
-                    RFimplem = "ranger")
+                    RFimplem = "randomForest", parallel = TRUE)
 summary(vsurf_model)
+plot(vsurf_model)
 variables=attr(vsurf_model$terms, "term.labels") #the variables order used in VSURF
 
-plot(vsurf_model, step="thres", imp.mean=FALSE, main="Variable importance plot") # variable importance plot
+plot(vsurf_model, step="thres", imp.sd=F, main="Variable importance plot", var.names = T) # variable importance plot
 #green line - a smoothing function using CART
 #red line - threshold which is a minimum predicted value from green line (everything below threshold is rejected for further steps)
 variables[vsurf_model$varselect.thres] #the selected variables after threshold step]
 colnames(x_train[vsurf_model[["varselect.thres"]]])
 
-plot(vsurf_model, step="interp", imp.mean=FALSE, main="Variable importance plot")
+plot(vsurf_model, step="interp", main="Variable importance plot", var.names = T)
 #red line - threshold, the smallest model with OOB less than worst OOB+ 1 sd
 variables[vsurf_model$varselect.interp]
-colnames(x_train[vsurf_model[["varselect.interp"]]])
+colnames(x_train[vsurf_model[["varselect.interp"]]]) #"if_ng_26"     "mip_1b_67"    "tn_fa_76"     "il_12_p40_43" - the order of importance.
+vsurf_model[["err.interp"]] # OOB error RATE for the model with selected variables after interp step. 
+#0.5 error rate means that the model is not better than random guess (=variables in the dataset are random). 
+#Thats because OOB error rate for classification(and regression if values are from 0 to 1 from simulation) is [number of wrong classifications/ n] can be from 0 to 1
 
 plot(vsurf_model, step="pred", imp.mean=FALSE, main="Variable importance plot")
 #red line - threshold, the smallest model with OOB less than worst OOB+ 1 sd
@@ -218,7 +179,7 @@ mod_rfor = cforest(ptsd ~ ., data = avengers)
 compare.fits(ptsd ~ strength , data =avengers, mod_rfor)
 
 
-glm_mod = glm(outcome~if_ng_26+il_12_p40_43, data = df_imp_1[,c(2:length(df_imp_1))],family = "binomial")
+glm_mod = glm(outcome~if_ng_26+mip_1b_67, data = df_imp_1[,c(2:length(df_imp_1))],family = "binomial")
 summary(glm_mod)
 exp(coef(glm_mod))
 vif(glm_mod) # Variance inflation factor, no multicollinearity
@@ -261,21 +222,24 @@ summary(confusion, event_level = "second")
 ####LOOCV
 
 ctrl <- trainControl(
-  method          = "LOOCV",
+  method          = "cv",
+  number = 5,
   savePredictions = "final",   # <-- keeps every hold‑out prediction
   classProbs      = TRUE,
-  summaryFunction = twoClassSummary
+  summaryFunction = prSummary
 )
 
-trctrl <- trainControl(method = "boot",number=10000,
-                       returnResamp="all", savePredictions = "final",   # <-- keeps every hold‑out prediction
+trctrl <- trainControl(method = "boot",
+                       number=10000,
+                       returnResamp="all", 
+                       savePredictions = "final",   # <-- keeps every hold‑out prediction
                        classProbs      = TRUE,
                        summaryFunction = prSummary)
 
 set.seed(42)
 loocv_fit <- train(
   y= y_train, 
-  x= x_train[,c("if_ng_26","il_12_p40_43"), drop = FALSE],
+  x= x_train[,c("if_ng_26","mip_1b_67"), drop = FALSE],
   method      = "glm",
   family      = binomial,
   trControl   = trctrl,
@@ -284,7 +248,7 @@ loocv_fit <- train(
 
 loocv_fit <- train(
   y= y_train, 
-  x= x_train[,c("if_ng_26","il_12_p40_43"), drop = FALSE],
+  x= x_train[,c("if_ng_26","mip_1b_67"), drop = FALSE],
   method      = "glm",
   family      = binomial,
   trControl   = ctrl,
@@ -297,6 +261,7 @@ x <- evalm(list(loocv_fit,loocv_fit_2))
 #1 var - more stable, but less precise
 #2 var - les stable , but more precise
 
+#bootstrap with 2 var(mip second) : sens = 0.79, spec =0.89, ROC = 0.813, PPV=0.73,NPV=0.92, bal.Ac = 0.84 (10000 samples enough)
 #bootstrap with 2 var : sens = 0.71, spec =0.897, ROC = 0.798, PPV=0.72,NPV=0.89, bal.Ac = 0.81 (10000 samples enough)
 #bootstrap with 1 var : sens = 0.67, spec =0.91, ROC = 0.790, PPV=0.737,NPV=0.88, bal.Ac = 0.79
 
@@ -433,6 +398,7 @@ quantile(roc, c(.025, .5, .975))   # ROC AUC CI
 #especially when the algorithm’s positive predictions will be used for clinical decision making.+#ROC + IMBALANce robust metrics
 
 ################
+# Elastic Net Regression with caret
 library(caret)
 library(glmnet)
 
@@ -461,13 +427,13 @@ x_mat <- as.matrix(x_train)                  # keeps column names
 ##  LOOCV Elastic‑Net, optimised on ROC AUC
 set.seed(42)
 loocv_fit_en <- train(
-  x          = x_mat,
+  x          = x_train,
   y          = y_train,                      # factor with two levels
   method     = "glmnet",
   family     = "binomial",
   tuneGrid   = grid,                         # or tuneLength = 25
-  metric     = "Spec",                        # must match summaryFunction
-  trControl  = ctrl
+  metric     = "ROC",                        # must match summaryFunction
+  trControl  = trctrl
 )
 
 ## 5 ───────────────────────────────────────────────────────────────
@@ -493,10 +459,12 @@ confusionMatrix(pred_best$pred,
 best_lambda <- loocv_fit_en$bestTune$lambda
 
 # Get the coefficient vector at that λ
-beta <- coef(loocv_fit_en$finalModel, s = best_lambda)
+beta <- coef(loocv_fit_en$finalModel, s = best_lambda)#mip_1b_67, tn_fb_77, if_ng_26  with bootstrap
 
 # Drop the intercept and keep non‑zero terms
 keep_idx <- which(beta != 0)[-1]        # -1 removes the intercept row
 selected_vars <- rownames(beta)[keep_idx]
 
 selected_vars
+
+plot(varImp(loocv_fit_en),top=10)
