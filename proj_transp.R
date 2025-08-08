@@ -3,18 +3,15 @@ library(readxl)
 library(statip)
 library(pheatmap)
 library(VIM)
-library(writexl)
 library(glmnet)
 library(caret)
 library(party)
 library(flexplot)
 library(VSURF)
 library(janitor)
-library(car)
-library(tidymodels)
-library(olsrr)
+library(MLeval)
 library(pROC)
-library(precrec)
+library(tibble)
 set.seed(1234)
 
 # Read xlsx and recode the outcome
@@ -32,7 +29,8 @@ df_1 = df %>%
          sex = factor(sex_1_m_2_f, levels = c(1, 2), labels = c("Male", "Female")),
          time_tr = time_from_transplantation_month
          ) %>%
-  select(patient_id, outcome, sex, age,time_tr, c(-1,-2,-5, -time_from_transplantation_month))
+  select(patient_id, outcome, sex, age,time_tr, c(-1,-2,-5, -time_from_transplantation_month)) %>%
+  mutate(outcome= factor(outcome, levels = c(1, 0), labels = c("Yes", "No")))
 
 df_1 %>%
   is.na() %>%
@@ -70,38 +68,10 @@ df_imp_1 = df_imp_0 %>%
 #dont delete observation 2 because this is the only one female among cases and you will get the separation issue,
 #however this observation is an outlier(low value of if while being rejected), so you can keep it for sensitivity analysis
 
-#COMPARE PREDICTION PERFORMANCE WITH AND WITHOUT TRANSFORMED DATA!!!!!!!!!!!
-x_train = df_imp_1 %>%
-  select(3:length(df_imp)) %>%
-  mutate(
-    across(                                                    
-      .cols = where(is.numeric),                  
-      .fns  = ~ log1p(.x),                                 
-      .names = "{.col}"                                  
-    ),
-    across(                                                    
-      .cols = where(is.numeric),                  
-      .fns  = ~ scale(.x),                                 
-      .names = "{.col}"                                  
-    )) 
-
-y_train <- df_imp_1 %>% 
-  pull(outcome) %>% 
-  factor(levels = c(0, 1),
-         labels = c("No", "Yes"))
-
-x1 = df_imp_1 %>%
-  select(age,time_tr,if_ng_26, il_12_p40_43, tn_fb_77, mip_1b_67, tn_fa_76) %>%
-  cor()
-
-x2 = x_train %>%
-  select(age,time_tr,if_ng_26, il_12_p40_43, tn_fb_77, mip_1b_67, tn_fa_76) %>%
-  cor()
-  
-boxplot(df_imp,outline=FALSE,col="cornflowerblue")
+boxplot(df_imp_1,outline=FALSE,col="cornflowerblue")
 ##################################################Correlation analysis
 
-cor_mat=cor(df_imp[,4:length(df_imp)], method = "pearson")
+cor_mat=cor(df_imp_1[,4:length(df_imp_1)], method = "pearson")
 
 #' Find correlated variable pairs in a correlation matrix
 
@@ -142,7 +112,13 @@ pheatmap(
   main = "Correlation Heatmap"
 )
 
-##################################################VSURF##########################################################################
+#############################################################################################################VSURF(NON STANDARDIZED DATA)
+
+x_train = df_imp_1 %>%
+  select(3:length(df_imp_1))
+
+y_train <- df_imp_1 %>% 
+  pull(outcome) 
 
 vsurf_model = VSURF(y=y_train, x=x_train, ntree.thres = 10000,nfor.thres = 100, 
                     ntree.interp = 10000, nfor.interp=100, 
@@ -150,321 +126,248 @@ vsurf_model = VSURF(y=y_train, x=x_train, ntree.thres = 10000,nfor.thres = 100,
                     RFimplem = "randomForest", parallel = TRUE)
 summary(vsurf_model)
 plot(vsurf_model)
-variables=attr(vsurf_model$terms, "term.labels") #the variables order used in VSURF
 
 plot(vsurf_model, step="thres", imp.sd=F, main="Variable importance plot", var.names = T) # variable importance plot
 #green line - a smoothing function using CART
 #red line - threshold which is a minimum predicted value from green line (everything below threshold is rejected for further steps)
-variables[vsurf_model$varselect.thres] #the selected variables after threshold step]
 colnames(x_train[vsurf_model[["varselect.thres"]]])
+vsurf_model[["imp.mean.dec"]]*100 #var importance
 
 plot(vsurf_model, step="interp", main="Variable importance plot", var.names = T)
-#red line - threshold, the smallest model with OOB less than worst OOB+ 1 sd
-variables[vsurf_model$varselect.interp]
-colnames(x_train[vsurf_model[["varselect.interp"]]]) #"if_ng_26"     "mip_1b_67"    "tn_fa_76"     "il_12_p40_43" - the order of importance.
+#red line - threshold, the smallest model with OOB less than lowest OOB+ 1 sd
+colnames(x_train[vsurf_model[["varselect.interp"]]]) #"if_ng_26"     "mip_1b_67"    "tn_fa_76"     "il_12_p40_43" "time_tr"      "tn_fb_77" - the order of importance.
 vsurf_model[["err.interp"]] # OOB error RATE for the model with selected variables after interp step. 
 #0.5 error rate means that the model is not better than random guess (=variables in the dataset are random). 
 #Thats because OOB error rate for classification(and regression if values are from 0 to 1 from simulation) is [number of wrong classifications/ n] can be from 0 to 1
 
 plot(vsurf_model, step="pred", imp.mean=FALSE, main="Variable importance plot")
-#red line - threshold, the smallest model with OOB less than worst OOB+ 1 sd
-variables[vsurf_model$varselect.pred] #if_ng_26 + il_12_p40_43 +(tn_fb_77?)
 colnames(x_train[vsurf_model[["varselect.pred"]]])
 
-mod_rfor = cforest(outcome ~ if_ng_26+il_12_p40_43+mip_1b_67+tn_fa_76, data = df_imp[,-1])
-compare.fits(outcome ~ if_ng_26, data = df_imp[,-1], mod_rfor)
-
-data("avengers")
-mod_rfor = cforest(ptsd ~ ., data = avengers)
-compare.fits(ptsd ~ strength , data =avengers, mod_rfor)
-
-
-glm_mod = glm(outcome~if_ng_26+mip_1b_67, data = df_imp_1[,c(2:length(df_imp_1))],family = "binomial")
-summary(glm_mod)
-exp(coef(glm_mod))
-vif(glm_mod) # Variance inflation factor, no multicollinearity
-
-ggplot(df_imp, aes(x=if_ng_26, y=outcome)) +
-  geom_point()
-
-ggplot(df_imp, aes(x=if_ng_26)) +
+ggplot(df_imp_1, aes(x=if_ng_26)) + 
   geom_histogram()
 
-stats::cooks.distance(glm_mod) 
-# Plot Cook's distance
-ols_plot_dfbetas(glm_mod)
-ols_plot_cooksd_chart(glm_mod, type = 1, threshold = NULL, print_plot = TRUE)
+ggplot(df_imp_1, aes(x=il_12_p40_43)) + 
+  geom_histogram()
 
-#6, 22 obs are influential - keep track of outliers. better to check all the variables for outliers. sens anaylsis with and without outliers.
-#plot logistic curve
+ggplot(df_imp_1, aes(x=tn_fb_77)) + 
+  geom_histogram() #different scale
 
+ggplot(df_imp_1, aes(x=mip_1b_67)) + 
+  geom_histogram()
 
-############Confusion matrix
-# Get the actual responses from churn
-actual_response <- df_imp_1$outcome
+ggplot(df_imp_1, aes(x=tn_fa_76)) + 
+  geom_histogram()
 
-# Get the predicted responses from the model
-predicted_response <- round(fitted(glm_mod))
+df_imp_1 %>%
+  select(if_ng_26, il_12_p40_43, tn_fb_77, mip_1b_67, tn_fa_76) %>%
+  preProcess(
+    method = c("expoTrans", "center", "scale"),
+    na.remove = TRUE
+  ) %>%
+  cor()  #transformation is desirable
 
-# Get a table of these values
-outcomes <- table(predicted_response, actual_response)
+############################################################################################## Elastic Net Regression with caret
 
-# Convert the table to a conf_mat object
-confusion <- conf_mat(outcomes)
-
-# "Automatically" plot the confusion matrix
-autoplot(confusion)
-
-# Get summary metrics
-summary(confusion, event_level = "second")
-
-
-####LOOCV
-
+# y: factor with the *positive class first* (needed for ROC in caret)
+# Example: y <- factor(y, levels = c("case","control"))
 ctrl <- trainControl(
-  method          = "cv",
+  method = "repeatedcv",
   number = 5,
-  savePredictions = "final",   # <-- keeps every hold‑out prediction
-  classProbs      = TRUE,
-  summaryFunction = prSummary
+  repeats = 100,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,   # gives ROC, Sens, Spec
+  savePredictions = "final",
+  returnResamp = "all",
+  allowParallel = T
+  # sampling = "down"  # or "up"/"smote" if you have class imbalance
 )
 
-trctrl <- trainControl(method = "boot",
-                       number=10000,
-                       returnResamp="all", 
-                       savePredictions = "final",   # <-- keeps every hold‑out prediction
-                       classProbs      = TRUE,
-                       summaryFunction = prSummary)
-
-set.seed(42)
-loocv_fit <- train(
-  y= y_train, 
-  x= x_train[,c("if_ng_26","mip_1b_67"), drop = FALSE],
-  method      = "glm",
-  family      = binomial,
-  trControl   = trctrl,
-  metric     = "AUC"
-)
-
-loocv_fit <- train(
-  y= y_train, 
-  x= x_train[,c("if_ng_26","mip_1b_67"), drop = FALSE],
-  method      = "glm",
-  family      = binomial,
-  trControl   = ctrl,
-  metric     = "AUC"
-)
-
-x <- evalm(list(loocv_fit,loocv_fit_2))
-
-#sens 0.833 with 2 var
-#1 var - more stable, but less precise
-#2 var - les stable , but more precise
-
-#bootstrap with 2 var(mip second) : sens = 0.79, spec =0.89, ROC = 0.813, PPV=0.73,NPV=0.92, bal.Ac = 0.84 (10000 samples enough)
-#bootstrap with 2 var : sens = 0.71, spec =0.897, ROC = 0.798, PPV=0.72,NPV=0.89, bal.Ac = 0.81 (10000 samples enough)
-#bootstrap with 1 var : sens = 0.67, spec =0.91, ROC = 0.790, PPV=0.737,NPV=0.88, bal.Ac = 0.79
-
-loocv_fit$results
-outcomes <- table(loocv_fit$pred$pred, loocv_fit$pred$obs)
-confusionMatrix(outcomes, positive = "Yes")
-
-# Convert the table to a conf_mat object
-confusion <- conf_mat(outcomes)
-
-# "Automatically" plot the confusion matrix
-autoplot(confusion)
-
-# Get summary metrics
-summary(confusion, event_level = "second")
-
-rocCurve <- pROC::roc(
-  response  = loocv_fit$pred$obs,   # factor: "No"/"Yes"
-  predictor = loocv_fit$pred$Yes    # numeric: P(class = "Yes")
-)
-plot(rocCurve, print.auc = TRUE)
-plot(x1, print.auc = TRUE) #1 var
-plot(x2, print.auc = TRUE) #2 var
-pROC::coords(rocCurve, "best", ret = c("threshold", "sensitivity", "specificity"))
-
-###
-# choose the cut-off threshold based on the ROC curve
-
-# 1) Build the ROC (make sure the positive class is correct)
-rocCurve <- roc(
-  response  = loocv_fit$pred$obs,     # factor with levels c("No","Yes")
-  predictor = loocv_fit$pred$Yes,     # P(class == "Yes")
-  levels = c("No","Yes"),             # ensure "Yes" is the positive class
-  direction = "<"                     # higher prob -> "Yes"
-)
-
-# 2) Get the best threshold (Youden’s J or closest-to-(0,1))
-best <- coords(
-  rocCurve,
-  x = "best",
-  best.method = "youden",             # or "closest.topleft"
-  ret = c("threshold","sensitivity","specificity"),
-  transpose = FALSE                   # returns a named vector
-)
-
-best_threshold <- best["threshold"]
-best_threshold #0.22
-thr90sens <- pROC::coords(rocCurve, x = 0.80, input = "sensitivity", ret = "threshold")
-thr95spec <- pROC::coords(rocCurve, x = 0.85, input = "specificity", ret = "threshold")
-
-### pr-recall
-library(precrec)
-
-scores <- loocv_fit$pred$Yes
-labels <- loocv_fit$pred$obs  # factor with "No"/"Yes"
-
-mmod <- evalmod(scores = scores,
-                labels = labels,
-                posclass = "Yes")   # <-- not 'positive'
-# includes AUPRC and AUROC
-autoplot(mmod, "PRC") + ggtitle("Precision–Recall")
-autoplot(mmod, "ROC") + ggtitle("ROC")
-ap_df <- auc(mmod)                        # AUCs for both ROC and PR
-auprc <- subset(ap_df, curvetypes == "PRC")$aucs
-auprc
-
-# using your objects
-scores <- loocv_fit$pred$Yes
-labels <- factor(loocv_fit$pred$obs, levels = c("No","Yes"))
-
-prevalence <- mean(labels == "Yes")   # PR baseline
-auprc <- 0.61                          # your PR AUC
-roc_auc <- 0.79                        # your ROC AUC
-
-# "Lift" over baseline, scaled to [0,1]
-pr_lift <- (auprc - prevalence) / (1 - prevalence)
-prevalence; pr_lift
-
-#Prevalence ≈ 0.271 → a random classifier’s baseline AUPRC ≈ 0.271.
-
-#Your AUPRC = 0.61 → +0.339 absolute above baseline, or about 2.25× the baseline (0.61 / 0.271).
-
-#pr_lift = 0.465 → you’re 46.5% of the way from random to perfect in PR space (where 0 = baseline, 1 = perfect).
-
-#ROC AUC = 0.79 looks higher because ROC is less sensitive to class imbalance; with ~27% positives, it’s normal for AUPRC to be notably lower than ROC AUC.
-
-library(dplyr); library(yardstick); library(ggplot2)
-
-df <- loocv_fit$pred %>%
-  transmute(truth = factor(obs, levels = c("No","Yes")),
-            score = Yes)
-
-pr <- pr_curve(df, truth, score, event_level = "second")
-
-best <- pr %>%
-  mutate(F1 = 2*precision*recall/(precision+recall)) %>%
-  filter(!is.na(F1)) %>% slice_max(F1, n = 1)
-
-best$.threshold; best$precision; best$recall #best threshold is 0.42 based on F1 score
-
-#Plot the PR curve + annotate baseline and the chosen point
-#The dashed horizontal line is the prevalence (= baseline precision of a random classifier).
-
-#The point marks your best‑F1 operating point (recall, precision) on the curve.
-
-autoplot(pr) +
-  geom_hline(yintercept = mean(df$truth == "Yes"), linetype = 2) +
-  geom_point(aes(x = best$recall, y = best$precision))
-
-#Uncertainty
-
-
-set.seed(1)
-B <- 2000
-n <- nrow(df)
-ap <- roc <- numeric(B)
-
-for (b in 1:B) {
-  i <- sample.int(n, n, replace = TRUE)
-  m <- evalmod(scores = df$score[i], labels = df$truth[i], posclass = "Yes")
-  ap[b]  <- subset(auc(m),  curvetypes == "PRC")$aucs
-  roc[b] <- subset(auc(m),  curvetypes == "ROC")$aucs
-}
-
-quantile(ap,  c(.025, .5, .975))   # AUPRC CI
-quantile(roc, c(.025, .5, .975))   # ROC AUC CI
-
-
-
-#roc for if_ng_26 + il_12_p40_43 = 0.781 , but sens is higher, however 2 times were convergence issue
-#roc for if_ng_26 = 0.823
-# The further from 1 that the CPR is, the more misleading ROC analysis can be. In the cases where CPR is not close to 1, consider 
-#using precision-recall analysis or evaluating Matthew’s correlation coefficient (MCC) (e.g. plotting MCC versus sensitivity), 
-#especially when the algorithm’s positive predictions will be used for clinical decision making.+#ROC + IMBALANce robust metrics
-
-################
-# Elastic Net Regression with caret
-library(caret)
-library(glmnet)
-
-## 1 ───────────────────────────────────────────────────────────────
-##  Control object: leave‑one‑out CV + ROC
 ctrl <- trainControl(
   method          = "LOOCV",
-  savePredictions = "final",
   classProbs      = TRUE,
-  summaryFunction = twoClassSummary          # gives ROC, Sens, Spec
+  summaryFunction = twoClassSummary,
+  savePredictions = "final",
+  returnResamp = "all")
+
+
+ctrl <- trainControl(
+  method          = "boot632",
+  number = 1000,
+  classProbs      = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final",
+  returnResamp = "all"
 )
 
-## 2 ───────────────────────────────────────────────────────────────
-##  Tuning grid for Elastic‑Net
-grid <- expand.grid(
-  alpha  = seq(0, 1,  by = 0.10),            # 0 = ridge, 1 = lasso
-  lambda = 10^seq(-4, 1, length = 25)        # shrinkage values
+
+fit_1 <- train(
+  outcome ~ if_ng_26,
+  method = "glm",
+  family = "binomial",  
+  preProcess = c("expoTrans","center","scale"),
+  metric = "ROC",
+  trControl = ctrl,
+  data = df_imp_1
 )
 
-## 3 ───────────────────────────────────────────────────────────────
-##  Predictor matrix: *all* 60 columns
-#  (x_train is your pre‑processed data‑frame/tibble:  n × 60)
-x_mat <- as.matrix(x_train)                  # keeps column names
-
-## 4 ───────────────────────────────────────────────────────────────
-##  LOOCV Elastic‑Net, optimised on ROC AUC
-set.seed(42)
-loocv_fit_en <- train(
-  x          = x_train,
-  y          = y_train,                      # factor with two levels
-  method     = "glmnet",
-  family     = "binomial",
-  tuneGrid   = grid,                         # or tuneLength = 25
-  metric     = "ROC",                        # must match summaryFunction
-  trControl  = trctrl
+fit_2 <- train(
+  outcome ~ if_ng_26 + mip_1b_67,
+  method = "glmnet",
+  preProcess = c("expoTrans","center","scale"),  
+  metric = "ROC",
+  tuneGrid = expand.grid(
+    alpha  = seq(0, 1, by = 0.1),
+    lambda = 10^seq(-4, 1, length.out = 50)
+  ),
+  trControl = ctrl,
+  standardize = FALSE,
+  data = df_imp_1
 )
 
-## 5 ───────────────────────────────────────────────────────────────
-##  Quick checks
-loocv_fit_en$bestTune                  # α & λ chosen on LOOCV ROC
-getTrainPerf(loocv_fit_en)            # ROC, Sens, Spec of best model
-head(loocv_fit_en$results)            # full resampling table
+fit_3 <- train(
+  outcome ~ if_ng_26 + mip_1b_67+tn_fa_76,
+  method = "glmnet",
+  preProcess = c("expoTrans","center","scale"), 
+  metric = "ROC",
+  tuneGrid = expand.grid(
+    alpha  = seq(0, 1, by = 0.1),
+    lambda = 10^seq(-4, 1, length.out = 50)
+  ),
+  trControl = ctrl,
+  standardize = FALSE,
+  data = df_imp_1
+)
 
-## 6 ───────────────────────────────────────────────────────────────
-##  Confusion matrix for the best α‑λ pair
-library(dplyr)
-best <- loocv_fit_en$bestTune
+fit_4 <- train(
+  outcome ~ if_ng_26 + mip_1b_67+tn_fa_76 + il_12_p40_43,
+  method = "glmnet",
+  preProcess = c("expoTrans","center","scale"), 
+  metric = "ROC",
+  tuneGrid = expand.grid(
+    alpha  = seq(0, 1, by = 0.1),
+    lambda = 10^seq(-4, 1, length.out = 50)
+  ),
+  trControl = ctrl,
+  standardize = FALSE,
+  data = df_imp_1
+)
 
-pred_best <- loocv_fit_en$pred %>% 
-  filter(alpha  == best$alpha,
-         lambda == best$lambda)
+fit_5 <- train(
+  outcome ~ if_ng_26 + mip_1b_67+tn_fa_76 + il_12_p40_43 + tn_fb_77,
+  method = "glmnet",
+  preProcess = c("expoTrans","center","scale"),  
+  metric = "ROC",
+  tuneGrid = expand.grid(
+    alpha  = seq(0, 1, by = 0.1),
+    lambda = 10^seq(-4, 1, length.out = 50)
+  ),
+  trControl = ctrl,
+  standardize = FALSE,
+  data = df_imp_1
+)
 
-confusionMatrix(pred_best$pred,
-                pred_best$obs,
-                positive = "Yes")      # adjust if your “positive” ≠ "Yes"
+# Coef from regula glm with 1 var
+summary(fit_1$finalModel)$coefficients  
 
-# Pull the best lambda chosen by caret
-best_lambda <- loocv_fit_en$bestTune$lambda
+#Coef and vars from elastic 
+model_names <- sprintf("fit_%d", 1:5)
+fits <- mget(model_names, inherits = TRUE)  
 
-# Get the coefficient vector at that λ
-beta <- coef(loocv_fit_en$finalModel, s = best_lambda)#mip_1b_67, tn_fb_77, if_ng_26  with bootstrap
+# Helper to extract best alpha/lambda and coefficients at that lambda
+extract_glmnet <- function(fit, name) {
+  best_alpha  <- fit$bestTune$alpha[1]
+  best_lambda <- fit$bestTune$lambda[1]
+  
+  # Coefficients at best lambda (includes "(Intercept)")
+  cm <- coef(fit$finalModel, s = best_lambda)
+  v  <- as.numeric(cm)
+  names(v) <- rownames(cm)
+  
+  # Keep nonzero coefficients (optional)
+  v <- v[v != 0]
+  
+  tibble(
+    fit         = name,
+    best_alpha  = best_alpha,
+    best_lambda = best_lambda,
+    coef        = list(v)#,     # list-column
+    #auc        = fit$results$ROC[fit$bestTune$alpha == best_alpha & fit$bestTune$lambda == best_lambda],
+    #auc_sd = fit$results$ROCSD[fit$bestTune$alpha == best_alpha & fit$bestTune$lambda == best_lambda]
+  )
+}
 
-# Drop the intercept and keep non‑zero terms
-keep_idx <- which(beta != 0)[-1]        # -1 removes the intercept row
-selected_vars <- rownames(beta)[keep_idx]
+elastic_df <- bind_rows(
+  lapply(names(fits), function(nm) extract_glmnet(fits[[nm]], nm))
+)
 
-selected_vars
+elastic_df$coef #tn_fa and il excluded from fit_5 => unstable + tn_fb has multiple null values
 
-plot(varImp(loocv_fit_en),top=10)
+######################################Performance evaluation
+
+res <- evalm(list(fit_1, fit_2, fit_3, fit_4, fit_5), gnames = c("if","if+mip","if+mip+tn_fa","if+mip+tn_fa+il","if+mip+tn_fa+il+tn_fb"), 
+             rlinethick = 0.8, fsize = 8, plots = "cc", positive = "Yes", optimise = "MCC", bins=4)
+
+res <- evalm(list(fit_4),  
+             rlinethick = 0.8, fsize = 8, plots = "cc", positive = "Yes", optimise = "MCC", bins=4)
+#calibration curve is much better for if+mip
+
+res$optres 
+res$stdres 
+res[["probs"]]$"if+mip"[which.max(res[["probs"]]$"if+mip"$MCC),]
+
+roc_obj <- roc(response = res[["probs"]][["if+mip"]][["obs"]], predictor =res[["probs"]][["if+mip"]][["Yes"]], quiet = TRUE)
+opt_cut <- coords(roc_obj, "best", ret = c("threshold","sensitivity","specificity"), best.method="youden")
+
+#fit_2
+#ggplot(fit_2)
+
+
+#####################################Calibration
+# Intercept and slope
+
+cal_df = data.frame(
+  fit = c(),
+  intercept = c(),
+  slope = c() 
+)
+
+for (i in names(res$optres)) {
+  p =  res[["probs"]][[i]][["Yes"]]
+  y = res[["probs"]][[i]][["obs"]]
+  glm_cal <- glm(y ~ qlogis(p), family = binomial)
+  inter = glm_cal$coefficients[1]
+  slope = glm_cal$coefficients[2]
+  name = i
+  cal_df = rbind(cal_df, data.frame(fit = name, intercept = inter, slope = slope))
+}
+  
+cal_df
+
+#Brier score
+brier_ll__df = data.frame(
+  fit = c(),
+  brier_score = c(),
+  log_likelihood = c()
+)
+
+for (i in names(res$optres)) {
+  df <- data.frame(
+    Yes = res[["probs"]][[i]][["Yes"]],           
+    No  = res[["probs"]][[i]][["No"]],      
+    obs = res[["probs"]][[i]][["obs"]]
+  )
+  brier = brier_score(df, positive = colnames(df)[1])
+  log_like = LL(df, positive = colnames(df)[1])
+  name = i
+  brier_ll__df = rbind(brier_ll__df, data.frame(fit = name, brier_score = brier, log_likelihood = log_like))
+}
+
+brier_ll__df
+
+# caret calibration plot
+preds <- res[["probs"]][[1]]
+cal_raw <- caret::calibration(obs ~ Yes, data = preds, class = "Yes", cuts = 4)
+xyplot(cal_raw, auto.key = list(columns = 1))
+
+############## NESTED LOOCV???????
+#Model assumptions?
