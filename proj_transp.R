@@ -12,7 +12,8 @@ library(janitor)
 library(MLeval)
 library(pROC)
 library(tibble)
-set.seed(1234)
+library(report)
+set.seed(123)
 
 # Read xlsx and recode the outcome
 df <- read_xlsx("D:/Packages/proj_transpl/Cytokines_heart_data_24.06 1 and 4 groups.xlsx",
@@ -63,7 +64,7 @@ zero_var = df_imp_0 %>%
   filter(percentUnique < 50) #Variables egf_13, il_17e_il_25_51, il_17f_53 , il_22_55 have very low percent unique values => remove
   
 df_imp_1 = df_imp_0 %>%
-  select(-c(egf_13, il_17e_il_25_51, il_17f_53, il_22_55))#%>%
+  select(-c(egf_13, il_17e_il_25_51, il_17f_53, il_22_55,time_tr))#%>%
   #slice(-c(6))  
 #dont delete observation 2 because this is the only one female among cases and you will get the separation issue,
 #however this observation is an outlier(low value of if while being rejected), so you can keep it for sensitivity analysis
@@ -166,6 +167,9 @@ df_imp_1 %>%
   ) %>%
   cor()  #transformation is desirable
 
+
+rf = cforest(outcome ~ if_ng_26 , data = df_imp_1)
+estimates(rf)
 ############################################################################################## Elastic Net Regression with caret
 
 # y: factor with the *positive class first* (needed for ROC in caret)
@@ -185,7 +189,7 @@ ctrl <- trainControl(
 ctrl <- trainControl(
   method          = "LOOCV",
   classProbs      = TRUE,
-  summaryFunction = twoClassSummary,
+  summaryFunction = prSummary,
   savePredictions = "final",
   returnResamp = "all")
 
@@ -201,11 +205,11 @@ ctrl <- trainControl(
 
 
 fit_1 <- train(
-  outcome ~ if_ng_26,
+  outcome ~ if_ng_26 + mip_1b_67+tn_fb_77,
   method = "glm",
   family = "binomial",  
-  preProcess = c("expoTrans","center","scale"),
-  metric = "ROC",
+  preProcess = c("YeoJohnson","center","scale"),
+  metric = "AUC",
   trControl = ctrl,
   data = df_imp_1
 )
@@ -225,9 +229,9 @@ fit_2 <- train(
 )
 
 fit_3 <- train(
-  outcome ~ if_ng_26 + mip_1b_67+tn_fa_76,
+  outcome ~ if_ng_26 + mip_1b_67+tn_fb_77,
   method = "glmnet",
-  preProcess = c("expoTrans","center","scale"), 
+  preProcess = c("YeoJohnson","center","scale"), 
   metric = "ROC",
   tuneGrid = expand.grid(
     alpha  = seq(0, 1, by = 0.1),
@@ -255,8 +259,8 @@ fit_4 <- train(
 fit_5 <- train(
   outcome ~ if_ng_26 + mip_1b_67+tn_fa_76 + il_12_p40_43 + tn_fb_77,
   method = "glmnet",
-  preProcess = c("expoTrans","center","scale"),  
-  metric = "ROC",
+  preProcess = c("YeoJohnson","center","scale"),  
+  metric = "AUC",
   tuneGrid = expand.grid(
     alpha  = seq(0, 1, by = 0.1),
     lambda = 10^seq(-4, 1, length.out = 50)
@@ -305,9 +309,9 @@ elastic_df$coef #tn_fa and il excluded from fit_5 => unstable + tn_fb has multip
 ######################################Performance evaluation
 
 res <- evalm(list(fit_1, fit_2, fit_3, fit_4, fit_5), gnames = c("if","if+mip","if+mip+tn_fa","if+mip+tn_fa+il","if+mip+tn_fa+il+tn_fb"), 
-             rlinethick = 0.8, fsize = 8, plots = "cc", positive = "Yes", optimise = "MCC", bins=4)
+             rlinethick = 0.8, fsize = 8, plots = "pr", positive = "Yes", optimise = "MCC", bins=5)
 
-res <- evalm(list(fit_4),  
+res <- evalm(list(fit_5),  
              rlinethick = 0.8, fsize = 8, plots = "cc", positive = "Yes", optimise = "MCC", bins=4)
 #calibration curve is much better for if+mip
 
