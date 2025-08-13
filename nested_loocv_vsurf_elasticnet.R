@@ -32,6 +32,45 @@ calculate_prauc <- function(actual, predicted_probs) {
   })
 }
 
+# Function to calculate Matthews Correlation Coefficient (MCC)
+calculate_mcc <- function(actual, predicted_probs, threshold = 0.5) {
+  if (length(unique(actual)) < 2) {
+    return(0)
+  }
+  
+  # Convert probabilities to binary predictions
+  predicted_binary <- ifelse(predicted_probs >= threshold, 1, 0)
+  
+  # Ensure both are factors with same levels
+  actual <- as.factor(actual)
+  predicted_binary <- as.factor(predicted_binary)
+  
+  # Ensure both have the same levels
+  levels_both <- union(levels(actual), levels(predicted_binary))
+  actual <- factor(actual, levels = levels_both)
+  predicted_binary <- factor(predicted_binary, levels = levels_both)
+  
+  # Create confusion matrix
+  cm <- confusionMatrix(predicted_binary, actual)
+  
+  # Extract TP, TN, FP, FN
+  tp <- cm$table[2, 2]  # True Positives
+  tn <- cm$table[1, 1]  # True Negatives
+  fp <- cm$table[2, 1]  # False Positives
+  fn <- cm$table[1, 2]  # False Negatives
+  
+  # Calculate MCC
+  numerator <- (tp * tn) - (fp * fn)
+  denominator <- sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+  
+  if (denominator == 0) {
+    return(0)
+  }
+  
+  mcc <- numerator / denominator
+  return(mcc)
+}
+
 # Function to perform VSURF variable selection
 perform_vsurf_selection <- function(X_train, y_train) {
   # Ensure data types are correct
@@ -65,6 +104,7 @@ train_elastic_net <- function(X_train, y_train, X_val, y_val) {
   )
   
   best_prauc <- 0
+  best_mcc <- 0
   best_model <- NULL
   best_params <- NULL
   
@@ -90,15 +130,19 @@ train_elastic_net <- function(X_train, y_train, X_val, y_val) {
     # Calculate PRAUC
     prauc <- calculate_prauc(y_val, pred_probs)
     
+    # Calculate MCC
+    mcc <- calculate_mcc(y_val, pred_probs)
+    
     # Update best model if current PRAUC is better
     if (prauc > best_prauc) {
       best_prauc <- prauc
+      best_mcc <- mcc
       best_model <- model
       best_params <- c(alpha = alpha_val, lambda = lambda_val)
     }
   }
   
-  return(list(model = best_model, prauc = best_prauc, params = best_params))
+  return(list(model = best_model, prauc = best_prauc, mcc = best_mcc, params = best_params))
 }
 
 # Function to assess calibration performance
@@ -209,6 +253,7 @@ nested_loocv_vsurf_elasticnet <- function(X, y, n_outer_folds = NULL) {
       selected_variables = selected_vars,
       elastic_params = elastic_result$params,
       test_prauc = elastic_result$prauc,
+      test_mcc = elastic_result$mcc,
       test_predictions = test_predictions,
       test_actuals = y_test_outer
     )
@@ -216,11 +261,12 @@ nested_loocv_vsurf_elasticnet <- function(X, y, n_outer_folds = NULL) {
     # Store predictions for overall assessment
     all_predictions[test_indices] <- test_predictions
     
-    cat("  Test PRAUC:", round(elastic_result$prauc, 4), "\n")
+    cat("  Test PRAUC:", round(elastic_result$prauc, 4), "| MCC:", round(elastic_result$mcc, 4), "\n")
   }
   
   # Overall performance assessment
   overall_prauc <- calculate_prauc(all_actuals, all_predictions)
+  overall_mcc <- calculate_mcc(all_actuals, all_predictions)
   
   # Calibration assessment
   calibration_result <- assess_calibration(all_actuals, all_predictions)
@@ -231,6 +277,7 @@ nested_loocv_vsurf_elasticnet <- function(X, y, n_outer_folds = NULL) {
     overall_predictions = all_predictions,
     overall_actuals = all_actuals,
     overall_prauc = overall_prauc,
+    overall_mcc = overall_mcc,
     calibration = calibration_result,
     selected_variables_summary = table(unlist(lapply(outer_results, function(x) x$selected_variables)))
   )
@@ -266,6 +313,7 @@ print_summary <- function(results) {
   
   cat("\nOverall Performance:\n")
   cat("Overall PRAUC:", round(results$overall_prauc, 4), "\n")
+  cat("Overall MCC:", round(results$overall_mcc, 4), "\n")
   
   cat("\nCalibration Performance:\n")
   cat("Expected Calibration Error (ECE):", round(results$calibration$ece, 4), "\n")
@@ -281,6 +329,7 @@ print_summary <- function(results) {
   for (i in 1:length(results$outer_results)) {
     fold_result <- results$outer_results[[i]]
     cat("Fold", i, ": PRAUC =", round(fold_result$test_prauc, 4),
+        "| MCC =", round(fold_result$test_mcc, 4),
         "| Variables =", length(fold_result$selected_variables), "\n")
   }
 }

@@ -109,6 +109,7 @@ Provides comprehensive calibration metrics:
 ### Performance Metrics
 
 - **PRAUC**: Precision-Recall AUC (higher is better, range 0-1)
+- **MCC**: Matthews Correlation Coefficient (higher is better, range -1 to 1, 0 = random prediction)
 - **Calibration ECE**: Expected Calibration Error (lower is better, range 0-1)
 - **Hosmer-Lemeshow**: Chi-squared statistic for calibration (lower p-value indicates better calibration)
 
@@ -171,6 +172,7 @@ NESTED LOOCV WITH VSURF AND ELASTIC NET RESULTS
 
 Overall Performance:
 Overall PRAUC: 0.8234
+Overall MCC: 0.7123
 
 Calibration Performance:
 Expected Calibration Error (ECE): 0.0456
@@ -183,8 +185,8 @@ Variable 3 selected 92 times
 ...
 
 Outer Fold Results:
-Fold 1 : PRAUC = 0.8123 | Variables = 8
-Fold 2 : PRAUC = 0.8345 | Variables = 7
+Fold 1 : PRAUC = 0.8123 | MCC = 0.7012 | Variables = 8
+Fold 2 : PRAUC = 0.8345 | MCC = 0.7234 | Variables = 7
 ...
 ```
 

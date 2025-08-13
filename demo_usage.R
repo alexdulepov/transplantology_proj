@@ -62,11 +62,15 @@ print(var_freq_df)
 fold_performance <- data.frame(
   fold = 1:length(results$outer_results),
   prauc = sapply(results$outer_results, function(x) x$test_prauc),
+  mcc = sapply(results$outer_results, function(x) x$test_mcc),
   n_variables = sapply(results$outer_results, function(x) length(x$selected_variables))
 )
 
 cat("\nPerformance Summary Across Folds:\n")
+cat("PRAUC Summary:\n")
 print(summary(fold_performance$prauc))
+cat("\nMCC Summary:\n")
+print(summary(fold_performance$mcc))
 
 # 3. Create performance plots
 library(ggplot2)
@@ -81,6 +85,17 @@ prauc_plot <- ggplot(fold_performance, aes(x = prauc)) +
   theme_minimal()
 
 print(prauc_plot)
+
+# MCC distribution across folds
+mcc_plot <- ggplot(fold_performance, aes(x = mcc)) +
+  geom_histogram(bins = 10, fill = "darkorange", alpha = 0.7) +
+  geom_vline(xintercept = results$overall_mcc, color = "red", linetype = "dashed") +
+  labs(title = "Distribution of MCC Across Folds",
+       subtitle = paste("Overall MCC:", round(results$overall_mcc, 4)),
+       x = "Matthews Correlation Coefficient", y = "Frequency") +
+  theme_minimal()
+
+print(mcc_plot)
 
 # Number of variables selected across folds
 var_count_plot <- ggplot(fold_performance, aes(x = n_variables)) +
@@ -114,6 +129,7 @@ cat("Informative features:", paste(informative_features, collapse = ", "), "\n")
 cat("Cross-validation: Nested LOOCV with VSURF variable selection\n")
 cat("Model: Elastic Net with PRAUC optimization\n")
 cat("Overall PRAUC:", round(results$overall_prauc, 4), "\n")
+cat("Overall MCC:", round(results$overall_mcc, 4), "\n")
 cat("Calibration ECE:", round(results$calibration$ece, 4), "\n")
 cat("Average variables selected:", round(mean(fold_performance$n_variables), 2), "\n")
 cat("="*60 + "\n")
