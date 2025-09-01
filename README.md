@@ -4,12 +4,12 @@ This repository contains R code for implementing nested Leave-One-Out Cross-Vali
 
 ## Features
 
-- **Nested LOOCV**: Outer loop for model evaluation, inner loop for variable selection
-- **VSURF Variable Selection**: Uses VSURF (Variable Selection Using Random Forests) for interpretable variable selection
+- **Nested LOOCV**: Outer loop for model evaluation, inner loop for variable selection and parameters optimization
+- **VSURF Variable Selection**: Uses VSURF (Variable Selection Using Random Forests) and elastic net for variable selection (comparison of the 2 methods)
 - **Elastic Net Training**: Elastic net models trained using caret package
-- **PRAUC Optimization**: Maximizes Precision-Recall AUC for imbalanced classification tasks
-- **Calibration Assessment**: Comprehensive calibration performance metrics including ECE and Hosmer-Lemeshow statistic
-- **Flexible Cross-Validation**: Supports both LOOCV and K-fold cross-validation
+- **LogLoss Optimization**: Minimizes logloss (cross-entropy)
+- **Calibration Assessment**: Comprehensive calibration performance metrics including calibration-in-the large, calibraion slope and calibraion plot
+- **Decision analysis**: Implementation of the decision curve analysis for the assessment of the model clinical utility
 
 ## Files
 
