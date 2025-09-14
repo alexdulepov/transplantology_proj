@@ -1,184 +1,5 @@
-library(caret)
-library(tidyverse)
-library(ModelMetrics)
-library(recipes)
-library(glmnet)
-library(yardstick)
-library(MLeval)    # optional: compare against yardstick
-library(doParallel)
-library(VSURF)
-library(prg)
-library(CalibrationCurves)
-library(dcurves)
-library(readxl)
-library(statip)
-library(pheatmap)
-library(VIM)
-library(janitor)
-library(report)
-set.seed(123)
-
-
-# Read xlsx and recode the outcome
-df <- read_xlsx("D:/Packages/proj_transpl/Cytokines_heart_data_24.06 1 and 4 groups.xlsx",
-                sheet = 1)
-
-df_1 = df %>%
-  clean_names() %>%
-  mutate(
-    outcome = pull(df[,2]),
-    outcome = ifelse(outcome == 1, 1, 0),
-    patient_id= row_number() # Create a unique patient ID
-  ) %>%
-  mutate(outcome = factor(outcome, levels = c(0, 1), labels = c("No", "Yes")),
-         sex = factor(sex_1_m_2_f, levels = c(1, 2), labels = c("Male", "Female")),
-         time_tr = time_from_transplantation_month
-         ) %>%
-  select(patient_id, outcome, sex, age,time_tr, c(-1,-2,-5, -time_from_transplantation_month))
-
-df_1 %>%
-  is.na() %>%
-  colSums() #NA in 3 variables: CRP,Troponin,NT-proBNP
-
-###########################KNN imputation
-# Sorting variables in the data frame by the number of NAs
-vars_by_NAs <- df_1 %>%
-  is.na() %>%
-  colSums() %>%
-  sort(decreasing = FALSE) %>% 
-  names()
-
-# Imputation with kNN, k=5, using weighted mean for numeric variables
-df_imp_0<- df_1 %>% 
-  select(all_of(vars_by_NAs)) %>% 
-  kNN(k=5,
-      numFun = weighted.mean,
-      weightDist = TRUE) %>%
-  select(1:64)
-
-df_imp_0 %>%
-  is.na() %>%
-  colSums() #0 NA values
-
-
-##################################################' Find near zero variance predictors
-zero_var = df_imp_0 %>%
-  caret::nearZeroVar(saveMetrics = TRUE) %>%
-  filter(percentUnique < 50) #Variables egf_13, il_17e_il_25_51, il_17f_53 , il_22_55 have very low percent unique values => remove
-  
-df_imp_1 = df_imp_0 %>%
-  select(-c(egf_13, il_17e_il_25_51, il_17f_53, il_22_55,time_tr,patient_id))#%>%
-  #slice(-c(6))  
-#dont delete observation 2 because this is the only one female among cases and you will get the separation issue,
-#however this observation is an outlier(low value of if while being rejected), so you can keep it for sensitivity analysis
-
-boxplot(df_imp_1,outline=FALSE,col="cornflowerblue")
-##################################################Correlation analysis
-
-cor_mat=cor(df_imp_1[,4:length(df_imp_1)], method = "pearson")
-
-#' Find correlated variable pairs in a correlation matrix
-
-find_correlated <- function(cor_mat, cutoff = 0.70) {
-  
-  if (!is.matrix(cor_mat) || !is.numeric(cor_mat))
-    stop("cor_mat must be a numeric matrix (e.g. the output of cor()).")
-  
-  if (!identical(rownames(cor_mat), colnames(cor_mat)))
-    stop("Row and column names must match (a square correlation matrix).")
-  
-  ## Keep only the upper triangle so we don’t report duplicates or self‑correlations
-  cor_upper <- cor_mat
-  cor_upper[lower.tri(cor_upper, diag = TRUE)] <- NA
-  
-  ## Indices of cells that meet the cutoff
-  idx <- which(abs(cor_upper) >= cutoff, arr.ind = TRUE)
-  
-  ## Build a tidy data frame
-  data.frame(
-    var1 = rownames(cor_mat)[idx[,"row"]],
-    var2 = colnames(cor_mat)[idx[,"col"]],
-    r    = cor_upper[idx],
-    row.names = NULL
-  )
-}
-
-high_cor_var=find_correlated(cor_mat)
-
-#heatmap
-pheatmap(
-  cor_mat,
-  cluster_rows = TRUE,    # whether to cluster rows
-  cluster_cols = TRUE,    # whether to cluster columns
-  display_numbers = TRUE, # show correlation values in each cell
-  number_format = "%.2f", # format correlation values to 2 decimals
-  color = colorRampPalette(c("blue", "white", "red"))(50),
-  main = "Correlation Heatmap"
-)
-
-#############################################################################################################VSURF(NON STANDARDIZED DATA)
-
-x_train = df_imp_1 %>%
-  select(2:length(df_imp_1)) %>%
-  mutate(across(where(is.numeric), ~ log1p(.)))  #convert all numeric vars to numeric
-
-y_train <- df_imp_1 %>% 
-  pull(outcome) 
-
-set.seed(999)
-vsurf_model = VSURF(y=y_train, x=x_train, ntree.thres = 10000,nfor.thres = 100, 
-                    ntree.interp = 10000, nfor.interp=100, 
-                    ntree.pred = 10000, nfor.pred = 100,
-                    RFimplem = "randomForest", parallel = TRUE)
-summary(vsurf_model)
-plot(vsurf_model)
-
-plot(vsurf_model, step="thres", imp.sd=F, main="Variable importance plot", var.names = T) # variable importance plot
-#green line - a smoothing function using CART
-#red line - threshold which is a minimum predicted value from green line (everything below threshold is rejected for further steps)
-colnames(x_train[vsurf_model[["varselect.thres"]]])
-vsurf_model[["imp.mean.dec"]]*100 #var importance
-
-plot(vsurf_model, step="interp", main="Variable importance plot", var.names = T)
-#red line - threshold, the smallest model with OOB less than lowest OOB+ 1 sd
-colnames(x_train[vsurf_model[["varselect.interp"]]]) #"if_ng_26"     "mip_1b_67"    "tn_fa_76"     "il_12_p40_43" "time_tr"      "tn_fb_77" - the order of importance.
-vsurf_model[["err.interp"]] # OOB error RATE for the model with selected variables after interp step. 
-#0.5 error rate means that the model is not better than random guess (=variables in the dataset are random). 
-#Thats because OOB error rate for classification(and regression if values are from 0 to 1 from simulation) is [number of wrong classifications/ n] can be from 0 to 1
-
-plot(vsurf_model, step="pred", imp.mean=FALSE, main="Variable importance plot")
-colnames(x_train[vsurf_model[["varselect.pred"]]])
-
-ggplot(df_imp_1, aes(x=if_ng_26)) + 
-  geom_histogram()
-
-ggplot(df_imp_1, aes(x=il_12_p40_43)) + 
-  geom_histogram()
-
-ggplot(df_imp_1, aes(x=tn_fb_77)) + 
-  geom_histogram() #different scale
-
-ggplot(df_imp_1, aes(x=mip_1b_67)) + 
-  geom_histogram()
-
-ggplot(df_imp_1, aes(x=tn_fa_76)) + 
-  geom_histogram()
-
-df_imp_1 %>%
-  select(if_ng_26, il_12_p40_43, tn_fb_77, mip_1b_67, tn_fa_76) %>%
-  preProcess(
-    method = c("expoTrans", "center", "scale"),
-    na.remove = TRUE
-  ) %>%
-  cor()  #transformation is desirable
-
-
-rf = cforest(outcome ~ if_ng_26 , data = df_imp_1)
-estimates(rf)
-############################################################################################## Elastic Net Regression with caret
-
-#All numeric columns should be >= 0 for log transform inside the function
-
+#################################################################BINARY OUTCOME#################################################################
+#' Nested cross-validation with variable selection (VSURF and ElasticNet)
 nested_elastic_binary_outcome <- function(
     df,
     outcome_var = "outcome",
@@ -653,18 +474,6 @@ nested_elastic_binary_outcome <- function(
   ))
 }
 
-
-results = nested_elastic_binary_outcome(
-  df_imp_1, 
-  outcome_var = "outcome",
-  positive_class = "Yes",
-  negative_class = "No",
-  cv_outer_folds = 5,
-  cv_outer_repeats = 20,
-  seed = 1,
-  alpha_grid = seq(0, 1, by = 0.1),
-  lambda_grid = 10^seq(-4, 1, length.out = 50))
-
 # ---- Inner resample summaries ----
 inner_model_perf_nested_binary <- function(trained_object) {
   get_metrics <- function(m_list) {
@@ -695,8 +504,6 @@ inner_model_perf_nested_binary <- function(trained_object) {
   dplyr::bind_rows(vs_summary, elas_summary) |>
     dplyr::select(method, dplyr::everything())
 }
-
-inner_res <- inner_model_perf_nested_binary(trained_object = results)
 
 
 # ---- Outer performance on averaged predictions ----
@@ -773,305 +580,503 @@ outer_model_perf_nested_binary <- function(trained_object,
     dplyr::select(method, dplyr::everything())
 }
 
-outer_res <- outer_model_perf_nested_binary(trained_object = results,
-                                            positive_class = "Yes",
-                                            negative_class = "No")
+#################################################################CONTINUOUS OUTCOME#################################################################
 
-#AUC ROC-the probability is that a randomly chosen cancer patient is ranked higher (given higher prob) than a randomly chosen healthy patient 
-#the AUC judges a correctly assigned biopsy (TP) and an unnecessary biopsy (FP) as equally important.
-# ---- Calibration plots (rms) ----
-y01 <- as.integer(results$outer_y == "Yes")  # or pass in positive_class if not "Yes"
-
-cal_plot_vs <- val.prob.ci.2(
-  results$avg_final_outer_preds_vs,
-  y01,
-  logistic = TRUE,
-  col.log = "blue",
-  CL.smooth = FALSE
-)
-
-cal_plot_elas <- val.prob.ci.2(
-  results$avg_final_outer_preds_elas,
-  y01,
-  logistic = TRUE,
-  col.log = "blue",
-  CL.smooth = FALSE
-)
-
-cal_plot_elas <- val.prob.ci.2(
-  results$avg_final_outer_preds_single_elas,
-  y01,
-  logistic = TRUE,
-  col.log = "blue",
-  CL.smooth = FALSE
-)
-
-cal_plot_elas <- val.prob.ci.2(
-  results$avg_inner_biased_preds_elas,
-  y01,
-  logistic = TRUE,
-  col.log = "blue",
-  CL.smooth = FALSE
-)
-
-cal_plot_elas <- val.prob.ci.2(
-  results$avg_inner_biased_preds_vs,
-  y01,
-  logistic = TRUE,
-  col.log = "blue",
-  CL.smooth = FALSE
-)
-
-# Optional extra check
-val.prob(results$avg_final_outer_preds_vs,   y01)
-val.prob(results$avg_final_outer_preds_elas, y01)
-
-
-# ---- Decision curve analysis (dcurves) ----
-res_df <- tibble::tibble(
-  pred_elas = results$avg_final_outer_preds_elas,
-  pred_vs   = results$avg_final_outer_preds_vs,
-  pred_single_elas = results$avg_final_outer_preds_single_elas,
-  y01       = y01,
-  if_ng_26 = df_imp_1$if_ng_26[results$idx_outer],
-  sex = df_imp_1$sex[results$idx_outer]
-)
-
-dcurves::dca(
-  y01 ~ pred_elas + pred_vs +pred_single_elas,
-  data = res_df,
-  thresholds = seq(0, 0.6, by = 0.01)
-) %>%
-  plot(smooth = T)
-
-#The value of 0.16 at a threshold probability of 20% can be interpreted as: “Comparing to conducting no treatment(intervention), 
-#intervention on the basis of the elastic model is the equivalent of a strategy that found 16 rejections per hundred patients without conducting any unnecessary interventions”
-
-dca(y01 ~ pred_elas + pred_vs +pred_single_elas,
-    data = res_df,
-    thresholds = seq(0.05, 0.4, 0.01)
-) %>%
-  net_intervention_avoided() %>%
-  plot(smooth = T)
-
-#At a probability threshold of 15-30%, the net reduction in interventions is about 0.25. 
-#In other words, at this probability threshold, biopsying patients on the basis of the model is the equivalent of
-#a strategy that led to an absolute 25% reduction in the number of biopsies without missing any heart rejections (25 unnecessary biopsies avoided per 100 patients). 
-
-dca(y01 ~ pred_elas + pred_vs +pred_single_elas,
-    data = res_df,
-    thresholds = seq(0.1, 0.15, 0.2)
-) %>%
-  as_tibble() %>%
-  select(label, threshold, net_benefit) %>%
-  gt::gt() %>%
-  gt::fmt_percent(columns = threshold, decimals = 0) %>%
-  gt::cols_label(
-    label = "Strategy",
-    threshold = "Decision Threshold",
-    net_benefit = "Net Benefit"
-  ) %>%
-  gt::cols_align("left", columns = label)
-
-
-
-
-
-################################################################################Final model#######################################################################
-set.seed(1)
-outer_d_train = df_imp_1
-outcome_var = "outcome"
-positive_class = "Yes"
-negative_class = "No"
-outer_d_train[[outcome_var]] <- relevel(factor(outer_d_train[[outcome_var]]), ref = "No")
-
-
-
-make_recipe_vsurf <- function(vars_to_keep, data, outcome_var) {
-  all_pred <- setdiff(names(data), outcome_var)
-  rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-    recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-    recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-    recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-    recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
-    recipes::step_center(recipes::all_numeric_predictors()) |>
-    recipes::step_scale(recipes::all_numeric_predictors())
+nested_elastic_continuous_outcome <- function(
+    df,
+    outcome_var = "outcome",
+    cv_outer_folds = 5,
+    cv_outer_repeats = 20,
+    seed = 1,
+    alpha_grid  = seq(0, 1, by = 0.1),
+    lambda_grid = 10^seq(-4, 1, length.out = 50)
+) {
+  # ---- Reproducible RNG ----
+  RNGkind("L'Ecuyer-CMRG")
+  set.seed(seed)
   
-  if (!is.null(vars_to_keep)) {
-    rec <- rec |>
-      recipes::step_select(recipes::all_outcomes(), tidyselect::any_of(vars_to_keep))
-  }
-  rec
-}
-
-# Refit after VSURF for GLMNET: select RAW vars first, then dummy (k-1 coding)
-make_recipe_vsurf_glmnet <- function(vars_to_keep, data, outcome_var) {
-  stopifnot(!is.null(vars_to_keep))  # only for selected-var refits
-  rec <- make_recipe_vsurf(vars_to_keep, data, outcome_var) |>
-    recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
-  rec
-}
-
-# ElasticNet self-selection: dummy FIRST → then (optionally) select dummy names
-make_recipe_after_elas <- function(vars_to_keep, data, outcome_var) {
-  all_pred <- setdiff(names(data), outcome_var)
-  rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-    recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-    recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-    recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-    recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
-    recipes::step_center(recipes::all_numeric_predictors()) |>
-    recipes::step_scale(recipes::all_numeric_predictors()) |>
-    recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
+  # ---- Pre-checks ----
+  pred_names <- setdiff(names(df), outcome_var)
+  num_pred   <- vapply(df[pred_names], is.numeric, TRUE)
   
-  if (!is.null(vars_to_keep)) {
-    rec <- rec |>
-      recipes::step_select(recipes::all_outcomes(), tidyselect::any_of(vars_to_keep))
+  if (any(vapply(df[pred_names][num_pred], function(x) any(x < 0, na.rm = TRUE), TRUE))) {
+    stop("Some numeric predictors have negative values; log-transform will fail.")
   }
-  rec
+  
+  if (any(vapply(df[pred_names], is.character, TRUE))) {
+    message("Note: character predictors found; converting via step_string2factor().")
+  }
+  
+  # ---- Outer resampling indices ----
+  cv_outer_train_folds_rows <-
+    caret::createMultiFolds(df[[outcome_var]], k = cv_outer_folds, times = cv_outer_repeats)
+  
+  # ---- Recipes ----
+  make_recipe_vsurf <- function(vars_to_keep, data, outcome_var) {
+    all_pred <- setdiff(names(data), outcome_var)
+    rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
+      recipes::step_string2factor(recipes::all_nominal_predictors()) |>
+      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
+      recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+      recipes::step_center(recipes::all_numeric_predictors()) |>
+      recipes::step_scale(recipes::all_numeric_predictors())
+    if (!is.null(vars_to_keep)) {
+      rec <- rec |>
+        recipes::step_select(recipes::all_outcomes(), tidyselect::any_of(vars_to_keep))
+    }
+    rec
+  }
+  
+  make_recipe_vsurf_glmnet <- function(vars_to_keep, data, outcome_var) {
+    stopifnot(!is.null(vars_to_keep))
+    make_recipe_vsurf(vars_to_keep, data, outcome_var) |>
+      recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
+  }
+  
+  make_recipe_after_elas <- function(vars_to_keep, data, outcome_var) {
+    all_pred <- setdiff(names(data), outcome_var)
+    rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
+      recipes::step_string2factor(recipes::all_nominal_predictors()) |>
+      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
+      recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+      recipes::step_center(recipes::all_numeric_predictors()) |>
+      recipes::step_scale(recipes::all_numeric_predictors()) |>
+      recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
+    if (!is.null(vars_to_keep)) {
+      rec <- rec |>
+        recipes::step_select(recipes::all_outcomes(), tidyselect::any_of(vars_to_keep))
+    }
+    rec
+  }
+  
+  tg <- expand.grid(alpha = alpha_grid, lambda = lambda_grid)
+  
+  # ---- Inner CV control (regression) ----
+  ctrl_inner <- caret::trainControl(
+    method = "LOOCV",
+    savePredictions = "final",
+    summaryFunction = caret::defaultSummary,
+    verboseIter = FALSE,
+    allowParallel = FALSE
+  )
+  
+  n_outer <- length(cv_outer_train_folds_rows)
+  
+  sel_vars_df <- tibble::tibble(
+    elastic_sel_vars = vector("list", n_outer),
+    vsurf_sel_vars   = vector("list", n_outer),
+    final_coefs      = vector("list", n_outer)
+  )
+  
+  n_alg <- 2L
+  inner_perf <- vector("list", n_outer)
+  for (i in seq_len(n_outer)) {
+    inner_perf[[i]] <- vector("list", n_alg)
+    names(inner_perf[[i]]) <- c("VSURF", "ElasticNet")
+  }
+  
+  elas_once <- vector("list", n_outer)
+  
+  # ---- Parallel backend (once) ----
+  cl <- parallel::makePSOCKcluster(max(1L, parallel::detectCores() - 1L))
+  doParallel::registerDoParallel(cl)
+  on.exit({
+    try(parallel::stopCluster(cl), silent = TRUE)
+    foreach::registerDoSEQ()
+  }, add = TRUE)
+  
+  # ---- Outer CV ----
+  for (i in seq_along(cv_outer_train_folds_rows)) {
+    outer_train_idx <- cv_outer_train_folds_rows[[i]]
+    outer_test_idx  <- setdiff(seq_len(nrow(df)), outer_train_idx)
+    outer_d_train   <- df[outer_train_idx, , drop = FALSE]
+    outer_d_test    <- df[outer_test_idx,  , drop = FALSE]
+    
+    # VSURF bake
+    rec_all_vsurf <- make_recipe_vsurf(NULL, outer_d_train, outcome_var)
+    d_train_baked <- recipes::bake(recipes::prep(rec_all_vsurf, training = outer_d_train), new_data = NULL)
+    x_train <- d_train_baked |>
+      dplyr::select(-dplyr::all_of(outcome_var)) |>
+      as.data.frame()
+    y_train <- d_train_baked[[outcome_var]]
+    
+    # VSURF
+    vs <- VSURF::VSURF(
+      y = y_train,
+      x = x_train,
+      ntree.thres   = 5000, nfor.thres  = 50,
+      ntree.interp  = 5000, nfor.interp = 50,
+      ntree.pred    = 5000, nfor.pred   = 50,
+      RFimplem = "ranger",
+      parallel = TRUE
+    )
+    sel_idx <- vs$varselect.interp
+    vsurf_sel_vars <- if (length(sel_idx)) colnames(x_train)[sel_idx] else character(0)
+    sel_vars_df$vsurf_sel_vars[[i]] <- vsurf_sel_vars
+    message(sprintf("OUTER %02d — VSURF selected (%d): %s",
+                    i, length(vsurf_sel_vars), paste(vsurf_sel_vars, collapse=", ")))
+    
+    # Elastic outer selection on ALL predictors (dummy'd recipe)
+    rec_all_elas <- make_recipe_after_elas(NULL, outer_d_train, outcome_var)
+    elastic_sel <- caret::train(
+      rec_all_elas,
+      data = outer_d_train,
+      method = "glmnet",
+      metric = "RMSE",
+      maximize = FALSE,
+      tuneGrid = tg,
+      trControl = ctrl_inner,
+      family = "gaussian",
+      standardize = FALSE
+    )
+    coefs <- as.matrix(coef(elastic_sel$finalModel,
+                            s = elastic_sel$bestTune$lambda[1]))[, 1]
+    el_sel_vars <- setdiff(names(coefs)[coefs != 0], "(Intercept)")
+    sel_vars_df$elastic_sel_vars[[i]] <- el_sel_vars
+    message(sprintf("OUTER %02d — Elastic selected (%d): %s",
+                    i, length(el_sel_vars), paste(el_sel_vars, collapse=", ")))
+    
+    # One-pass elastic predictions on outer test
+    p_elas <- predict(elastic_sel, newdata = outer_d_test)
+    
+    # Intercept-only baseline fitted on OUTER TRAIN
+    rec_avg <- recipes::recipe(stats::as.formula(paste(outcome_var, "~ 1")), data = outer_d_train)
+    
+    fit_avg <- caret::train(
+      rec_avg, data = outer_d_train,
+      method = "glm",
+      metric = "RMSE", maximize = FALSE,
+      trControl = caret::trainControl(method = "none"),  # no CV needed
+      family = gaussian()
+    )
+    
+    baseline_pred <- predict(fit_avg, newdata = outer_d_test)
+    
+    # Store per-row predictions (align to indices)
+    elas_once[[i]] <- list(
+      preds_elas_once    = p_elas,
+      pred_idx_elas_once = outer_test_idx,
+      y_elas_once        = outer_d_test[[outcome_var]],
+      baseline_pred_once = baseline_pred
+    )
+    
+    list_vars_both <- list(vsurf_sel_vars, el_sel_vars)
+    sel_vars_df$final_coefs[[i]] <- vector("list", 2L)
+    names(sel_vars_df$final_coefs[[i]]) <- c("VSURF", "ElasticNet")
+    
+    # ----- Inner loop (selected vars) -----
+    for (j in seq_along(list_vars_both)) {
+      vars <- list_vars_both[[j]]
+      
+      if (j == 1) {
+        # VSURF branch
+        if (length(vars) == 0) {
+          rec_main <- recipes::recipe(stats::as.formula(paste(outcome_var, "~ 1")), data = outer_d_train)
+          fit_inner <- caret::train(
+            rec_main, data = outer_d_train,
+            method = "glm",
+            metric = "RMSE", maximize = FALSE,
+            trControl = ctrl_inner, family = "gaussian"
+          )
+        } else if (length(vars) == 1) {
+          rec_main <- make_recipe_vsurf(vars, outer_d_train, outcome_var)
+          fit_inner <- caret::train(
+            rec_main, data = outer_d_train,
+            method = "glm",
+            metric = "RMSE", maximize = FALSE,
+            trControl = ctrl_inner, family = "gaussian"
+          )
+        } else {
+          rec_main <- make_recipe_vsurf_glmnet(vars, outer_d_train, outcome_var)
+          fit_inner <- caret::train(
+            rec_main, data = outer_d_train,
+            method = "glmnet",
+            metric = "RMSE", maximize = FALSE,
+            tuneGrid = tg, trControl = ctrl_inner,
+            family = "gaussian", standardize = FALSE
+          )
+        }
+      } else {
+        # Elastic self-selection branch
+        if (length(vars) == 0) {
+          rec_main <- recipes::recipe(stats::as.formula(paste(outcome_var, "~ 1")), data = outer_d_train)
+          fit_inner <- caret::train(
+            rec_main, data = outer_d_train,
+            method = "glm",
+            metric = "RMSE", maximize = FALSE,
+            trControl = ctrl_inner, family = "gaussian"
+          )
+        } else if (length(vars) == 1) {
+          rec_main <- make_recipe_after_elas(vars, outer_d_train, outcome_var)
+          fit_inner <- caret::train(
+            rec_main, data = outer_d_train,
+            method = "glm",
+            metric = "RMSE", maximize = FALSE,
+            trControl = ctrl_inner, family = "gaussian"
+          )
+        } else {
+          rec_main <- make_recipe_after_elas(vars, outer_d_train, outcome_var)
+          fit_inner <- caret::train(
+            rec_main, data = outer_d_train,
+            method = "glmnet",
+            metric = "RMSE", maximize = FALSE,
+            tuneGrid = tg, trControl = ctrl_inner,
+            family = "gaussian", standardize = FALSE
+          )
+        }
+      }
+      
+      # Coefficients of final model
+      if (fit_inner[["method"]] == "glmnet") {
+        lam <- fit_inner$bestTune$lambda[1]
+        coefs2 <- as.matrix(coef(fit_inner$finalModel, s = lam))
+      } else {
+        coefs2 <- coef(fit_inner$finalModel)
+      }
+      sel_vars_df$final_coefs[[i]][[j]] <- coefs2
+      
+      # ---- Inner predictions & metrics ----
+      inner_preds <- fit_inner$pred
+      p_in   <- inner_preds$pred
+      truth  <- inner_preds$obs
+      
+      inner_dat <- tibble::tibble(truth = truth, pred = p_in)
+      
+      rmse_val   <- yardstick::rmse(inner_dat, truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+      mae_val    <- yardstick::mae(inner_dat,  truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+      r2_val     <- yardstick::rsq(inner_dat,  truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+      r2_tradval <- yardstick::rsq_trad(inner_dat, truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+      ccc_val    <- yardstick::ccc(inner_dat, truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+      
+      if (fit_inner[["method"]] == "glmnet") {
+        rmse_caret <- fit_inner$results |>
+          dplyr::filter(alpha == fit_inner$bestTune$alpha,
+                        lambda == fit_inner$bestTune$lambda) |>
+          dplyr::pull(RMSE)
+      } else {
+        rmse_caret <- fit_inner$results$RMSE[1]
+      }
+      
+      # ---- Predict on outer test ----
+      p_out <- predict(fit_inner, newdata = outer_d_test)
+      
+      # ---- Calibration (slope & intercept) ----
+      y     <- outer_d_test[[outcome_var]]
+      yhat  <- p_out
+      fit_cal   <- stats::lm(y ~ yhat)
+      cal_int   <- unname(coef(fit_cal)[1])
+      cal_slope <- unname(coef(fit_cal)[2])
+      fit_citl  <- stats::lm(y ~ 1 + offset(yhat))
+      citl      <- unname(coef(fit_citl)[1])
+      
+      inner_perf[[i]][[j]] <- list(
+        preds    = p_out,
+        pred_idx = outer_test_idx,
+        y        = y,
+        inner_preds_biased = p_in,
+        inner_obs_biased   = truth,
+        inner_idx = outer_train_idx[inner_preds$rowIndex],
+        metrics  = list(
+          rmse = rmse_val,
+          rmse_caret = rmse_caret,
+          mae  = mae_val,
+          r2   = r2_val,
+          r2_trad = r2_tradval,
+          ccc = ccc_val,
+          cal_intercept = cal_int,
+          cal_slope     = cal_slope,
+          citl_intercept= citl
+        )
+      )
+    }
+  } # end outer
+  
+  # ---- Aggregate predictions over outer folds ----
+  outer_df <- tibble::tibble()
+  inner_df <- tibble::tibble()
+  elas_once_df <- tibble::tibble()
+  
+  for (i in seq_along(inner_perf)) {
+    # Single elastic outer preds
+    elas_once_df <- dplyr::bind_rows(
+      elas_once_df,
+      tibble::tibble(
+        idx     = elas_once[[i]]$pred_idx_elas_once,
+        pred    = elas_once[[i]]$preds_elas_once,
+        outcome = elas_once[[i]]$y_elas_once,
+        baseline = elas_once[[i]]$baseline_pred_once
+      )
+    )
+    
+    for (j in seq_along(inner_perf[[i]])) {
+      method <- if (j == 1) "VSURF" else "ElasticNet"
+      
+      outer_df <- dplyr::bind_rows(
+        outer_df,
+        tibble::tibble(
+          idx     = inner_perf[[i]][[j]]$pred_idx,
+          pred    = inner_perf[[i]][[j]]$preds,
+          outcome = inner_perf[[i]][[j]]$y,
+          method  = method
+        )
+      )
+      inner_df <- dplyr::bind_rows(
+        inner_df,
+        tibble::tibble(
+          inner_idx         = inner_perf[[i]][[j]]$inner_idx,
+          inner_biased_pred = inner_perf[[i]][[j]]$inner_preds_biased,
+          inner_biased_obs  = inner_perf[[i]][[j]]$inner_obs_biased,
+          method            = method
+        )
+      )
+    }
+  }
+  
+  # Aggregate single elastic
+  avg_elas <- elas_once_df |>
+    dplyr::group_by(idx) |>
+    dplyr::summarise(avg_pred = mean(pred, na.rm = TRUE), .groups = "drop") |>
+    dplyr::arrange(idx)
+  
+  outer_y_elas <- elas_once_df |>
+    dplyr::group_by(idx) |>
+    dplyr::summarise(y = dplyr::first(outcome), .groups = "drop") |>
+    dplyr::arrange(idx) |>
+    dplyr::pull(y)
+  
+  # Aggregate outer preds
+  avg_wide <- outer_df |>
+    dplyr::group_by(idx, method) |>
+    dplyr::summarise(avg_pred = mean(pred, na.rm = TRUE), .groups = "drop") |>
+    tidyr::pivot_wider(names_from = method, values_from = avg_pred) |>
+    dplyr::arrange(idx)
+  
+  outer_y <- outer_df |>
+    dplyr::group_by(idx) |>
+    dplyr::summarise(y = dplyr::first(outcome), .groups = "drop") |>
+    dplyr::arrange(idx) |>
+    dplyr::pull(y)
+  
+  # Aggregate average model preds
+  
+  baseline_avg <- elas_once_df |>
+    dplyr::group_by(idx) |>
+    dplyr::summarise(avg_baseline = mean(baseline, na.rm = TRUE), .groups = "drop") |>
+    dplyr::arrange(idx)
+  
+  # Aggregate inner (biased) preds
+  avg_inner_biased <- inner_df |>
+    dplyr::filter(!is.na(inner_idx)) |>
+    dplyr::group_by(inner_idx, method) |>
+    dplyr::summarise(avg_pred = mean(inner_biased_pred, na.rm = TRUE), .groups = "drop") |>
+    tidyr::pivot_wider(names_from = method, values_from = avg_pred) |>
+    dplyr::arrange(inner_idx)
+  
+  inner_biased_obs <- inner_df |>
+    dplyr::filter(!is.na(inner_idx)) |>
+    dplyr::group_by(inner_idx) |>
+    dplyr::summarise(y = dplyr::first(inner_biased_obs), .groups = "drop") |>
+    dplyr::arrange(inner_idx) |>
+    dplyr::pull(y)
+  
+  return(list(
+    idx_outer                          = avg_wide$idx,
+    avg_final_outer_preds_vs           = avg_wide$VSURF,
+    avg_final_outer_preds_elas         = avg_wide$ElasticNet,
+    outer_y                            = outer_y,
+    idx_inner                          = avg_inner_biased$inner_idx,
+    avg_inner_biased_preds_vs          = avg_inner_biased$VSURF,
+    avg_inner_biased_preds_elas        = avg_inner_biased$ElasticNet,
+    inner_biased_obs                   = inner_biased_obs,
+    idx_outer_elas                     = avg_elas$idx,
+    avg_final_outer_preds_single_elas  = avg_elas$avg_pred,
+    outer_y_single_elas                = outer_y_elas,
+    avg_final_outer_preds_baseline     = baseline_avg$avg_baseline,
+    sel_vars_df                        = sel_vars_df,
+    inner_perf                         = inner_perf
+  ))
 }
 
-rec_all <- make_recipe_after_elas(NULL, outer_d_train, outcome_var)
-d_train_baked <- recipes::bake(recipes::prep(rec_all, training = outer_d_train), new_data = NULL)
 
-x_train <- d_train_baked |>
-  dplyr::select(-dplyr::all_of(outcome_var)) |>
-  as.data.frame()
+inner_model_perf_nested_regression <- function(trained_object) {
+  get_metrics <- function(m_list) {
+    dplyr::bind_rows(lapply(m_list, function(x) as.data.frame(x$metrics)))
+  }
+  
+  vs_metrics   <- get_metrics(lapply(trained_object$inner_perf, function(x) x[[1]]))
+  elas_metrics <- get_metrics(lapply(trained_object$inner_perf, function(x) x[[2]]))
+  
+  summarise_block <- function(df) {
+    dplyr::summarise(
+      df,
+      rmse_mean = mean(rmse, na.rm = TRUE),             rmse_sd = sd(rmse, na.rm = TRUE),
+      rmse_caret_mean = mean(rmse_caret, na.rm = TRUE), rmse_caret_sd = sd(rmse_caret, na.rm = TRUE),
+      mae_mean  = mean(mae,  na.rm = TRUE),             mae_sd  = sd(mae,  na.rm = TRUE),
+      r2_mean   = mean(r2,   na.rm = TRUE),             r2_sd   = sd(r2,   na.rm = TRUE),
+      r2_trad_mean = mean(r2_trad, na.rm = TRUE),       r2_trad_sd = sd(r2_trad, na.rm = TRUE),
+      ccc_mean  = mean(ccc,  na.rm = TRUE),             ccc_sd  = sd(ccc,  na.rm = TRUE),
+      cal_int_mean = mean(cal_intercept, na.rm = TRUE), cal_int_sd = sd(cal_intercept, na.rm = TRUE),
+      cal_slope_mean = mean(cal_slope, na.rm = TRUE),   cal_slope_sd = sd(cal_slope, na.rm = TRUE),
+      citl_int_mean = mean(citl_intercept, na.rm = TRUE), citl_int_sd = sd(citl_intercept, na.rm = TRUE)
+    )
+  }
+  
+  vs_summary   <- summarise_block(vs_metrics)   |> dplyr::mutate(method = "VSURF")
+  elas_summary <- summarise_block(elas_metrics) |> dplyr::mutate(method = "ElasticNet")
+  
+  dplyr::bind_rows(vs_summary, elas_summary) |> dplyr::select(method, dplyr::everything())
+}
 
-y_train <- d_train_baked[[outcome_var]]
-
-# ---- VSURF ----
-vs <- VSURF::VSURF(
-  y = y_train,
-  x = x_train,
-  ntree.thres   = 10000, nfor.thres  = 100,
-  ntree.interp  = 10000, nfor.interp = 100,
-  ntree.pred    = 10000, nfor.pred   = 100,
-  RFimplem = "randomForest",
-  parallel = TRUE
-)
-sel_idx <- vs$varselect.interp
-vsurf_sel_vars <- if (length(sel_idx)) colnames(x_train)[sel_idx] else character(0)
-#message(sprintf("OUTER %02d — VSURF selected (%d): %s",
-#               i, length(vsurf_sel_vars), paste(vsurf_sel_vars, collapse=", ")))
-
-#pred_terms = c("if_ng_26", "mip_1b_67", "tn_fa_76", "il_12_p40_43", "tn_fb_77")
-
-ctrl_inner <- caret::trainControl(
-  method = "LOOCV",
-  classProbs = TRUE,
-  savePredictions = "final",
-  summaryFunction = caret::mnLogLoss,
-  verboseIter = FALSE,
-  allowParallel = FALSE
-)
-
-tg <- expand.grid(
-  alpha  = seq(0, 1, by = 0.05),
-  lambda = 10^seq(-4, 1, length.out = 100)
-)
-
-#---- Elastic-net selection on all predictors ----
-
-elas_pre <- caret::train(
-  rec_all,
-  data = outer_d_train,
-  method = "glmnet",
-  metric = "logLoss",
-  maximize = FALSE,
-  tuneGrid = tg,
-  trControl = ctrl_inner,
-  family = "binomial",
-  standardize = FALSE
-)
-
-#Coef
-coefs <- as.matrix(coef(elas_pre$finalModel,
-                        s = elas_pre$bestTune$lambda[1]))[, 1]
-el_sel_vars <- setdiff(names(coefs)[coefs != 0], "(Intercept)")
-coef_elas_only <- coef(elas_pre$finalModel, s = elas_pre$bestTune$lambda)
-
-#---- Final model with VSURF selected vars ----
-rec_main <- make_recipe(vsurf_sel_vars, outer_d_train, outcome_var)
-#rec_main <- make_recipe(el_sel_vars, outer_d_train, outcome_var)
-
-final_fit <- caret::train(
-  rec_main,
-  data = outer_d_train,
-  method = "glmnet",
-  metric = "logLoss",
-  maximize = FALSE,
-  tuneGrid = tg,
-  trControl = ctrl_inner,
-  family = "binomial",
-  standardize = FALSE
-)
-
-
-#Coef
-coef_final <- coef(final_fit$finalModel, s = final_fit$bestTune$lambda)
-coefs_2 <- as.matrix(coef(final_fit$finalModel,
-                          s = final_fit$bestTune$lambda[1]))[, 1]
-el_sel_vars_2 <- setdiff(names(coefs_2)[coefs != 0], "(Intercept)")
-
-# Predict a new case
-new_case = df_imp_1 %>%
-  slice(1) %>%
-  mutate(if_ng_26 = 9, mip_1b_67 = 32, tn_fb_77 = 0.6, tn_fa_76 = 11, il_12_p40_43 = 0)
-
-pred_probs <- predict(final_fit, newdata = new_case, type = "prob")[, positive_class] #Yes=0.96
-pred_probs
-
-#manual calculation of prob using coefs
-df_imp_1_log <- df_imp_1 %>%
-  select(where(is.numeric)) %>%
-  mutate(across(everything(), log1p))
-
-new_case_log = new_case %>%
-  select(where(is.numeric)) %>%
-  mutate(across(where(is.numeric), log1p)) %>%
-  select(if_ng_26, mip_1b_67, tn_fa_76, il_12_p40_43, tn_fb_77) 
-
-new_case_log_center <- new_case_log - c(mean(df_imp_1_log$if_ng_26), 
-                                        mean(df_imp_1_log$mip_1b_67),
-                                        mean(df_imp_1_log$tn_fa_76),
-                                        mean(df_imp_1_log$il_12_p40_43),
-                                        mean(df_imp_1_log$tn_fb_77))
-
-new_case_log_scale <- new_case_log_center / c(sd(df_imp_1_log$if_ng_26), 
-                                              sd(df_imp_1_log$mip_1b_67),
-                                              sd(df_imp_1_log$tn_fa_76),
-                                              sd(df_imp_1_log$il_12_p40_43),
-                                              sd(df_imp_1_log$tn_fb_77))
-
-intercept = coef_final[1]
-beta_vector = coef_final[-1]
-log_odds = intercept + sum(beta_vector * as.numeric(new_case_log_scale))
-
-predicted_prob <- 1 / (1 + exp(-log_odds)) #0.96 - matched the caret prediction
-plogis(log_odds) #0.96 - matched the caret prediction
-
-df <- data.frame(
-  Yes = results$avg_final_outer_preds_single_elas,           
-  No  = 1-results$avg_final_outer_preds_single_elas,      
-  obs = results$outer_y_single_elas
-)
-evalm(df, positive = "Yes", optimise = "MCC") #similar - check
-
-
-df_1 <- data.frame(
-  Yes = results$avg_final_outer_preds_elas,           
-  No  = 1-results$avg_final_outer_preds_elas,      
-  obs = results$outer_y
-)
-
-evalm(df_1, positive = "Yes", optimise = "MCC") #similar - check
-
-df_2 <- data.frame(
-  Yes = results$avg_final_outer_preds_vs,           
-  No  = 1-results$avg_final_outer_preds_vs,      
-  obs = results$outer_y
-)
-
-evalm(df_2, positive = "Yes", optimise = "MCC") #similar - check
-
+outer_model_perf_nested_regression <- function(trained_object) {
+  stab_table <- function(sel_list, n_outer) {
+    tbl <- sort(table(unlist(sel_list)), decreasing = TRUE)
+    as.data.frame(tbl, stringsAsFactors = FALSE) |>
+      dplyr::rename(variable = Var1, times_selected = Freq) |>
+      dplyr::mutate(freq = times_selected / n_outer)
+  }
+  
+  cat("\n--- Elastic Net: selection stability ---\n")
+  print(stab_table(trained_object$sel_vars_df$elastic_sel_vars, nrow(trained_object$sel_vars_df)))
+  cat("\n--- VSURF: selection stability ---\n")
+  print(stab_table(trained_object$sel_vars_df$vsurf_sel_vars, nrow(trained_object$sel_vars_df)))
+  
+  get_metrics <- function(y_true, y_pred) {
+    dat <- tibble::tibble(truth = y_true, pred = y_pred)
+    rmse = yardstick::rmse(dat, truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+    mae  = yardstick::mae(dat,  truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+    r2   = yardstick::rsq(dat,  truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+    r2_trad = yardstick::rsq_trad(dat, truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+    ccc  = yardstick::ccc(dat,  truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+    mape = yardstick::mape(dat,  truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+    smape = yardstick::smape(dat, truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
+    
+    fit_cal   <- stats::lm(y_true ~ y_pred)
+    cal_int   <- unname(coef(fit_cal)[1])
+    cal_slope <- unname(coef(fit_cal)[2])
+    fit_citl  <- stats::lm(y_true ~ 1 + offset(y_pred))
+    citl      <- unname(coef(fit_citl)[1])
+    
+    tibble::tibble(
+      rmse = rmse, mae = mae, r2 = r2, r2_trad = r2_trad, ccc = ccc, mape = mape, smape = smape,
+      cal_intercept = cal_int, cal_slope = cal_slope, citl_intercept = citl
+    )
+  }
+  
+  vs_metrics    <- get_metrics(trained_object$outer_y, trained_object$avg_final_outer_preds_vs)
+  elas_metrics  <- get_metrics(trained_object$outer_y, trained_object$avg_final_outer_preds_elas)
+  inner_vs      <- get_metrics(trained_object$inner_biased_obs, trained_object$avg_inner_biased_preds_vs)
+  inner_elas    <- get_metrics(trained_object$inner_biased_obs, trained_object$avg_inner_biased_preds_elas)
+  single_elas   <- get_metrics(trained_object$outer_y_single_elas, trained_object$avg_final_outer_preds_single_elas)
+  baseline_mod  <- get_metrics(trained_object$outer_y_single_elas, trained_object$avg_final_outer_preds_baseline)
+  
+  dplyr::bind_rows(
+    dplyr::as_tibble(vs_metrics)    |> dplyr::mutate(method = "VSURF unbiased (outer)"),
+    dplyr::as_tibble(elas_metrics)  |> dplyr::mutate(method = "ElasticNet unbiased (outer)"),
+    dplyr::as_tibble(single_elas)   |> dplyr::mutate(method = "ElasticNet no preselection (outer)"),
+    dplyr::as_tibble(baseline_mod)  |> dplyr::mutate(method = "Reference (mean pred) model (outer)"),
+    dplyr::as_tibble(inner_vs)      |> dplyr::mutate(method = "VSURF biased (inner)"),
+    dplyr::as_tibble(inner_elas)    |> dplyr::mutate(method = "ElasticNet biased (inner)")
+  ) |> dplyr::select(method, dplyr::everything())
+}

@@ -4,33 +4,38 @@
 # Core packages
 install.packages("VSURF")
 install.packages("caret")
-install.packages("pROC")
 install.packages("glmnet")
-install.packages("ggplot2")
-install.packages("dplyr")
-install.packages("PRROC")
-
-# Additional dependencies that might be needed
-install.packages("randomForest")  # Required by VSURF
-install.packages("e1071")        # Required by caret
-install.packages("foreach")       # Required by caret
-install.packages("iterators")     # Required by caret
-install.packages("parallel")      # Required by caret
-
-# If you prefer using BiocManager for some packages:
-# if (!requireNamespace("BiocManager", quietly = TRUE))
-#     install.packages("BiocManager")
-# BiocManager::install("PRROC")
+install.packages("tidyverse")
+install.packages("recipes")
+install.packages("ModelMetrics")
+install.packages("yardstick")
+install.packages("MLeval")
+install.packages("prg")
+install.packages("CalibrationCurves")
+install.packages("dcurves")
+install.packages("readxl")
+install.packages("statip")
+install.packages("pheatmap")
+install.packages("janitor")
+install.packages("doParallel")
 
 # Load all packages to check if they're working
-library(VSURF)
 library(caret)
-library(pROC)
+library(tidyverse)
+library(ModelMetrics)
+library(recipes)
 library(glmnet)
-library(ggplot2)
-library(dplyr)
-library(PRROC)
-library(randomForest)
-library(e1071)
+library(yardstick)
+library(MLeval)    
+library(doParallel)
+library(VSURF)
+library(prg)
+library(CalibrationCurves)
+library(dcurves)
+library(readxl)
+library(statip)
+library(pheatmap)
+library(VIM)
+library(janitor)
 
 cat("All packages loaded successfully!\n")

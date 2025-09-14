@@ -2,7 +2,7 @@
 # This script demonstrates how to use the main functions with sample data
 
 # Source the main functions
-source("nested_loocv_vsurf_elasticnet.R")
+source("Functions_nested_CV(VSURF+elastic_net).R")
 
 # Generate sample data for demonstration
 set.seed(123)
@@ -36,7 +36,7 @@ cat("This may take several minutes depending on your data size...\n\n")
 # results <- nested_loocv_vsurf_elasticnet(X, y, n_outer_folds = 10)
 
 # Full LOOCV
-results <- nested_loocv_vsurf_elasticnet(X, y)
+results <- nested_elastic_binary_outcome(X, y)
 
 # Print comprehensive summary
 print_summary(results)
