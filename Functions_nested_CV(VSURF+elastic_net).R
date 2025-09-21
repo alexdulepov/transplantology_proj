@@ -9,11 +9,15 @@ nested_elastic_binary_outcome <- function(
     cv_outer_repeats = 20,
     seed = 1,
     alpha_grid  = seq(0, 1, by = 0.1),
-    lambda_grid = 10^seq(-4, 1, length.out = 50)
+    lambda_grid = 10^seq(-4, 1, length.out = 50),
+    ntree = 1000,
+    nfor = 20
 ) {
   # ---- Reproducible RNG ----
   RNGkind("L'Ecuyer-CMRG")
   set.seed(seed)
+  
+  message(sprintf("IMPORTANT: All perfomance metrics and models are built around the predicted probability of the positive class: '%s'", positive_class))
   
   # ---- Outcome factor with explicit order: negative first ----
   if (!all(c(negative_class, positive_class) %in% unique(df[[outcome_var]]))) {
@@ -51,7 +55,7 @@ nested_elastic_binary_outcome <- function(
     
     if (!is.null(vars_to_keep)) {
       rec <- rec |>
-        recipes::step_select(recipes::all_outcomes(), tidyselect::any_of(vars_to_keep))
+        recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(vars_to_keep))
     }
     rec
   }
@@ -78,7 +82,7 @@ nested_elastic_binary_outcome <- function(
     
     if (!is.null(vars_to_keep)) {
       rec <- rec |>
-        recipes::step_select(recipes::all_outcomes(), tidyselect::any_of(vars_to_keep))
+        recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(vars_to_keep))
     }
     rec
   }
@@ -128,7 +132,7 @@ nested_elastic_binary_outcome <- function(
     outer_d_test    <- df[outer_test_idx,  , drop = FALSE]
     
     tab <- table(outer_d_train[[outcome_var]])
-    message(sprintf("Outer %d class counts: %s",
+    message(sprintf("Outer %d class counts in the training fold: %s",
                     i, paste(sprintf("%s=%d", names(tab), tab), collapse=", ")))
     
     # Keep negative first consistently
@@ -151,9 +155,9 @@ nested_elastic_binary_outcome <- function(
     vs <- VSURF::VSURF(
       y = y_train,
       x = x_train,
-      ntree.thres   = 5000, nfor.thres  = 50,
-      ntree.interp  = 5000, nfor.interp = 50,
-      ntree.pred    = 5000, nfor.pred   = 50,
+      ntree.thres   = ntree, nfor.thres  = nfor,
+      ntree.interp  = ntree, nfor.interp = nfor,
+      ntree.pred    = ntree, nfor.pred   = nfor,
       RFimplem = "ranger",
       parallel = TRUE
     )
@@ -510,6 +514,10 @@ inner_model_perf_nested_binary <- function(trained_object) {
 outer_model_perf_nested_binary <- function(trained_object,
                                            positive_class = "Yes",
                                            negative_class = "No") {
+  
+  message(sprintf("IMPORTANT: All perfomance metrics are built around the predicted probability of the positive class: '%s'", positive_class))
+  
+  # ---- Variable selection stability ----
   stab_table <- function(sel_list) {
     tbl <- sort(table(unlist(sel_list)), decreasing = TRUE)
     as.data.frame(tbl, stringsAsFactors = FALSE) |>
@@ -589,7 +597,9 @@ nested_elastic_continuous_outcome <- function(
     cv_outer_repeats = 20,
     seed = 1,
     alpha_grid  = seq(0, 1, by = 0.1),
-    lambda_grid = 10^seq(-4, 1, length.out = 50)
+    lambda_grid = 10^seq(-4, 1, length.out = 50),
+    ntree = 1000,
+    nfor = 20
 ) {
   # ---- Reproducible RNG ----
   RNGkind("L'Ecuyer-CMRG")
@@ -623,7 +633,7 @@ nested_elastic_continuous_outcome <- function(
       recipes::step_scale(recipes::all_numeric_predictors())
     if (!is.null(vars_to_keep)) {
       rec <- rec |>
-        recipes::step_select(recipes::all_outcomes(), tidyselect::any_of(vars_to_keep))
+        recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(vars_to_keep))
     }
     rec
   }
@@ -646,7 +656,7 @@ nested_elastic_continuous_outcome <- function(
       recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
     if (!is.null(vars_to_keep)) {
       rec <- rec |>
-        recipes::step_select(recipes::all_outcomes(), tidyselect::any_of(vars_to_keep))
+        recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(vars_to_keep))
     }
     rec
   }
@@ -706,9 +716,9 @@ nested_elastic_continuous_outcome <- function(
     vs <- VSURF::VSURF(
       y = y_train,
       x = x_train,
-      ntree.thres   = 5000, nfor.thres  = 50,
-      ntree.interp  = 5000, nfor.interp = 50,
-      ntree.pred    = 5000, nfor.pred   = 50,
+      ntree.thres   = ntree, nfor.thres  = nfor,
+      ntree.interp  = ntree, nfor.interp = nfor,
+      ntree.pred    = ntree, nfor.pred   = nfor,
       RFimplem = "ranger",
       parallel = TRUE
     )
@@ -1080,3 +1090,461 @@ outer_model_perf_nested_regression <- function(trained_object) {
     dplyr::as_tibble(inner_elas)    |> dplyr::mutate(method = "ElasticNet biased (inner)")
   ) |> dplyr::select(method, dplyr::everything())
 }
+
+#################################################################FINAL MODEL WITH COEFS#################################################################
+
+final_model_with_coefs <- function(df,
+                                    outcome_var = "outcome",
+                                    positive_class = "Yes",
+                                    negative_class = "No",
+                                    family = c("binomial", "gaussian"),
+                                    cv_method = c("repeatedcv", "LOOCV"),
+                                    cv_folds = 5,
+                                    cv_repeats = 20,
+                                    alpha_grid  = seq(0, 1, by = 0.1),
+                                    lambda_grid = 10^seq(-4, 1, length.out = 50),
+                                    ntree = 1000,
+                                    nfor = 20,
+                                    selection_rule = c("best", "oneSE")) {
+  
+  family <- match.arg(family)
+  cv_method <- match.arg(cv_method)
+  selection_rule <- match.arg(selection_rule)
+  set.seed(1)
+  
+  if (selection_rule == "best") {
+    message("Final model will use the hyperparameters with the best inner CV performance.")
+  } else if (selection_rule == "oneSE") {
+    message("Final model will use the most regularized hyperparameters (parsimonious model) within 1 SE of the best inner CV performance.")
+  } else  {
+    stop("selection_rule must be either 'best' or 'oneSE'.")
+  }
+  
+  if (selection_rule == "oneSE" && cv_method == "LOOCV") {
+    stop("selection_rule = 'oneSE' is not compatible with LOOCV. Choose cv_method = 'repeatedcv' instead.")
+  }
+  
+  if (family == "binomial") {
+    message(sprintf("IMPORTANT: All variables and coefficients are selected based on the predicted probability of the positive class: '%s'", positive_class))
+    
+    df[[outcome_var]] <- relevel(factor(df[[outcome_var]]), ref = negative_class)
+    
+    make_recipe_vsurf <- function(vars_to_keep, data, outcome_var) {
+      all_pred <- setdiff(names(data), outcome_var)
+      rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
+        recipes::step_string2factor(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
+        recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+        recipes::step_center(recipes::all_numeric_predictors()) |>
+        recipes::step_scale(recipes::all_numeric_predictors())
+      
+      if (!is.null(vars_to_keep)) {
+        rec <- rec |>
+          recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(vars_to_keep))
+      }
+      rec
+    }
+    
+    # Refit after VSURF for GLMNET: select RAW vars first, then dummy (k-1 coding)
+    make_recipe_vsurf_glmnet <- function(vars_to_keep, data, outcome_var) {
+      stopifnot(!is.null(vars_to_keep))  # only for selected-var refits
+      rec <- make_recipe_vsurf(vars_to_keep, data, outcome_var) |>
+        recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
+      rec
+    }
+    
+    # ElasticNet self-selection: dummy FIRST → then (optionally) select dummy names
+    make_recipe_after_elas <- function(vars_to_keep, data, outcome_var) {
+      all_pred <- setdiff(names(data), outcome_var)
+      rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
+        recipes::step_string2factor(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
+        recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+        recipes::step_center(recipes::all_numeric_predictors()) |>
+        recipes::step_scale(recipes::all_numeric_predictors()) |>
+        recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
+      
+      if (!is.null(vars_to_keep)) {
+        rec <- rec |>
+          recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(vars_to_keep))
+      }
+      rec
+    }
+    
+    rec_all <- make_recipe_vsurf(NULL, df, outcome_var)
+    d_train_baked <- recipes::bake(recipes::prep(rec_all, training = df), new_data = NULL)
+    
+    x_train <- d_train_baked |>
+      dplyr::select(-dplyr::all_of(outcome_var)) |>
+      as.data.frame()
+    
+    y_train <- d_train_baked[[outcome_var]]
+    
+    # ---- VSURF ----
+    vs <- VSURF::VSURF(
+      y = y_train,
+      x = x_train,
+      ntree.thres   = ntree, nfor.thres  = nfor,
+      ntree.interp  = ntree, nfor.interp = nfor,
+      ntree.pred    = ntree, nfor.pred   = nfor,
+      RFimplem = "ranger",
+      parallel = TRUE
+    )
+    sel_idx_int <- vs$varselect.interp
+    sel_idx_pred <- vs$varselect.pred
+    vsurf_sel_vars_int <- if (length(sel_idx_int)) colnames(x_train)[sel_idx_int] else character(0)
+    vsurf_sel_vars_pred <- if (length(sel_idx_pred)) colnames(x_train)[sel_idx_pred] else character(0)
+    message(sprintf("VSURF at the interpretation step selected (%d): %s",
+            length(vsurf_sel_vars_int), paste(vsurf_sel_vars_int, collapse=", ")))
+    message(sprintf("VSURF at the prediction step selected (%d): %s",
+            length(vsurf_sel_vars_pred), paste(vsurf_sel_vars_pred, collapse=", ")))
+    
+    # ---- Elastic Net ----
+    if (selection_rule == "best") {
+      ctrl_inner <- caret::trainControl(
+        method = cv_method,
+        number = if (cv_method == "repeatedcv") cv_folds else NA,
+        repeats = if (cv_method == "repeatedcv") cv_repeats else NA,
+        savePredictions = "final",
+        classProbs = TRUE,
+        summaryFunction = caret::mnLogLoss,
+        verboseIter = FALSE,
+        allowParallel = FALSE
+      )
+    } else if (selection_rule == "oneSE") {
+      ctrl_inner <- caret::trainControl(
+        method = cv_method,
+        number = if (cv_method == "repeatedcv") cv_folds else NA,
+        repeats = if (cv_method == "repeatedcv") cv_repeats else NA,
+        savePredictions = "final",
+        classProbs = TRUE,
+        summaryFunction = caret::mnLogLoss,
+        selectionFunction = "oneSE",
+        verboseIter = FALSE,
+        allowParallel = FALSE
+      )
+    }
+    
+    tg <- expand.grid(
+      alpha  = alpha_grid,
+      lambda = lambda_grid
+    )
+    
+    #---- Elastic-net selection on all predictors ----
+    rec_all <- make_recipe_after_elas(NULL, df, outcome_var)
+    
+    elas_pre <- caret::train(
+      rec_all,
+      data = df,
+      method = "glmnet",
+      metric = "logLoss",
+      maximize = FALSE,
+      tuneGrid = tg,
+      trControl = ctrl_inner,
+      family = "binomial",
+      standardize = FALSE
+    )
+    
+    #Coef
+    coefs <- as.matrix(coef(elas_pre$finalModel,
+                            s = elas_pre$bestTune$lambda[1]))[, 1]
+    el_sel_vars <- setdiff(names(coefs)[coefs != 0], "(Intercept)")
+    coef_elas_only <- coefs[coefs != 0]
+    message(sprintf("ElasticNet selected (%d): %s",
+                    length(el_sel_vars), paste(el_sel_vars, collapse=", ")))
+    message("ElasticNet coefficients (all predictors):")
+    print(coef_elas_only)
+    
+    #---- Final model ----
+    sel_vars_df <- tibble::tibble(
+      elastic_single_coef = list(coef_elas_only),
+      vsurf_sel_vars_int_step   = list(vsurf_sel_vars_int),
+      vsurf_sel_vars_pred_step = list(vsurf_sel_vars_pred),
+      final_coefs      = vector("list", 2L)
+    )
+    names(sel_vars_df$final_coefs) <- c("VSURF", "ElasticNet")
+    
+    for (v in c("VSURF", "ElasticNet")) {
+      message(sprintf("\nFitting final elastic-net model using %s-selected variables...", v))
+      if (v == "VSURF") {
+        sel_vars <- vsurf_sel_vars_int
+      } else {
+        sel_vars <- el_sel_vars
+      }
+      
+      if (length(sel_vars) == 0) {
+        rec_main <- recipes::recipe(stats::as.formula(paste(outcome_var, "~ 1")), data = df)
+        final_fit <- caret::train(
+          rec_main, data = df,
+          method = "glm",
+          metric = "logLoss", maximize = FALSE,
+          trControl = caret::trainControl(method = "none"),  # no CV needed
+          family = "binomial"
+        )
+        
+        coef_final <- coef(final_fit$finalModel)
+        sel_vars_df$final_coefs[[v]] <- coef_final
+        
+      } else if (length(sel_vars) == 1) {
+        rec_main <- make_recipe_vsurf(sel_vars, df, outcome_var)
+        final_fit <- caret::train(
+          rec_main, data = df,
+          method = "glm",
+          metric = "logLoss", maximize = FALSE,
+          trControl = caret::trainControl(method = "none"),  # no CV needed
+          family = "binomial"
+        )
+        
+        coef_final <- coef(final_fit$finalModel)
+        sel_vars_df$final_coefs[[v]] <- coef_final
+        
+      } else {
+        if (v == "VSURF") {
+          rec_main <- make_recipe_vsurf_glmnet(sel_vars, df, outcome_var)
+        } else {
+          rec_main <- make_recipe_after_elas(sel_vars, df, outcome_var)
+        }
+        
+        final_fit <- caret::train(
+          rec_main, data = df,
+          method = "glmnet",
+          metric = "logLoss", maximize = FALSE,
+          tuneGrid = tg,
+          trControl = ctrl_inner,  
+          family = "binomial",
+          standardize = FALSE
+        )
+        
+        coefs_2 <- as.matrix(coef(final_fit$finalModel,
+                                  s = final_fit$bestTune$lambda[1]))[, 1]
+        sel_vars_df$final_coefs[[v]] <- coefs_2[coefs_2 != 0]
+      }
+      message(sprintf("Final model coefficients (after %s preselection):\n", v))
+      print(sel_vars_df$final_coefs[[v]])
+    }
+    return(list(
+      final_model = final_fit,
+      sel_vars_df = sel_vars_df,
+      vsurf_object = vs,
+      elasticnet_object = elas_pre
+    ))
+  }
+  else if (family == "gaussian") {
+
+    make_recipe_vsurf <- function(vars_to_keep, data, outcome_var) {
+      all_pred <- setdiff(names(data), outcome_var)
+      rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
+        recipes::step_string2factor(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
+        recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+        recipes::step_center(recipes::all_numeric_predictors()) |>
+        recipes::step_scale(recipes::all_numeric_predictors())
+      
+      if (!is.null(vars_to_keep)) {
+        rec <- rec |>
+          recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(vars_to_keep))
+      }
+      rec
+    }
+    
+    # Refit after VSURF for GLMNET: select RAW vars first, then dummy (k-1 coding)
+    make_recipe_vsurf_glmnet <- function(vars_to_keep, data, outcome_var) {
+      stopifnot(!is.null(vars_to_keep))  # only for selected-var refits
+      rec <- make_recipe_vsurf(vars_to_keep, data, outcome_var) |>
+        recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
+      rec
+    }
+    
+    # ElasticNet self-selection: dummy FIRST → then (optionally) select dummy names
+    make_recipe_after_elas <- function(vars_to_keep, data, outcome_var) {
+      all_pred <- setdiff(names(data), outcome_var)
+      rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
+        recipes::step_string2factor(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
+        recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+        recipes::step_center(recipes::all_numeric_predictors()) |>
+        recipes::step_scale(recipes::all_numeric_predictors()) |>
+        recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
+      
+      if (!is.null(vars_to_keep)) {
+        rec <- rec |>
+          recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(vars_to_keep))
+      }
+      rec
+    }
+    
+    rec_all <- make_recipe_vsurf(NULL, df, outcome_var)
+    d_train_baked <- recipes::bake(recipes::prep(rec_all, training = df), new_data = NULL)
+    
+    x_train <- d_train_baked |>
+      dplyr::select(-dplyr::all_of(outcome_var)) |>
+      as.data.frame()
+    
+    y_train <- d_train_baked[[outcome_var]]
+    
+    # ---- VSURF ----
+    vs <- VSURF::VSURF(
+      y = y_train,
+      x = x_train,
+      ntree.thres   = ntree, nfor.thres  = nfor,
+      ntree.interp  = ntree, nfor.interp = nfor,
+      ntree.pred    = ntree, nfor.pred   = nfor,
+      RFimplem = "ranger",
+      parallel = TRUE
+    )
+    sel_idx_int <- vs$varselect.interp
+    sel_idx_pred <- vs$varselect.pred
+    vsurf_sel_vars_int <- if (length(sel_idx_int)) colnames(x_train)[sel_idx_int] else character(0)
+    vsurf_sel_vars_pred <- if (length(sel_idx_pred)) colnames(x_train)[sel_idx_pred] else character(0)
+    message(sprintf("VSURF at the interpretation step selected (%d): %s",
+                    length(vsurf_sel_vars_int), paste(vsurf_sel_vars_int, collapse=", ")))
+    message(sprintf("VSURF at the prediction step selected (%d): %s",
+                    length(vsurf_sel_vars_pred), paste(vsurf_sel_vars_pred, collapse=", ")))
+    
+    # ---- Elastic Net ----
+    if (selection_rule == "best") {
+      ctrl_inner <- caret::trainControl(
+        method = cv_method,
+        number = if (cv_method == "repeatedcv") cv_folds else NA,
+        repeats = if (cv_method == "repeatedcv") cv_repeats else NA,
+        savePredictions = "final",
+        summaryFunction = defaultSummary,
+        verboseIter = FALSE,
+        allowParallel = FALSE
+      )
+    } else if (selection_rule == "oneSE") {
+      ctrl_inner <- caret::trainControl(
+        method = cv_method,
+        number = if (cv_method == "repeatedcv") cv_folds else NA,
+        repeats = if (cv_method == "repeatedcv") cv_repeats else NA,
+        savePredictions = "final",
+        summaryFunction = defaultSummary,
+        selectionFunction = "oneSE",
+        verboseIter = FALSE,
+        allowParallel = FALSE
+      )
+    }
+    
+    tg <- expand.grid(
+      alpha  = alpha_grid,
+      lambda = lambda_grid
+    )
+    
+    #---- Elastic-net selection on all predictors ----
+    rec_all <- make_recipe_after_elas(NULL, df, outcome_var)
+    
+    elas_pre <- caret::train(
+      rec_all,
+      data = df,
+      method = "glmnet",
+      metric = "RMSE",
+      maximize = FALSE,
+      tuneGrid = tg,
+      trControl = ctrl_inner,
+      family = "gaussian",
+      standardize = FALSE
+    )
+    
+    #Coef
+    coefs <- as.matrix(coef(elas_pre$finalModel,
+                            s = elas_pre$bestTune$lambda[1]))[, 1]
+    el_sel_vars <- setdiff(names(coefs)[coefs != 0], "(Intercept)")
+    coef_elas_only <- coefs[coefs != 0]
+    message(sprintf("ElasticNet selected (%d): %s",
+                    length(el_sel_vars), paste(el_sel_vars, collapse=", ")))
+    message("ElasticNet coefficients (all predictors):")
+    print(coef_elas_only)
+    
+    #---- Final model ----
+    sel_vars_df <- tibble::tibble(
+      elastic_single_coef = list(coef_elas_only),
+      vsurf_sel_vars_int_step   = list(vsurf_sel_vars_int),
+      vsurf_sel_vars_pred_step = list(vsurf_sel_vars_pred),
+      final_coefs      = vector("list", 2L)
+    )
+    names(sel_vars_df$final_coefs) <- c("VSURF", "ElasticNet")
+    
+    for (v in c("VSURF", "ElasticNet")) {
+      message(sprintf("\nFitting final elastic-net model using %s-selected variables...", v))
+      if (v == "VSURF") {
+        sel_vars <- vsurf_sel_vars_int
+      } else {
+        sel_vars <- el_sel_vars
+      }
+      
+      if (length(sel_vars) == 0) {
+        rec_main <- recipes::recipe(stats::as.formula(paste(outcome_var, "~ 1")), data = df)
+        final_fit <- caret::train(
+          rec_main, data = df,
+          method = "glm",
+          metric = "RMSE", maximize = FALSE,
+          trControl = caret::trainControl(method = "none"),  # no CV needed
+          family = "gaussian"
+        )
+        
+        coef_final <- coef(final_fit$finalModel)
+        sel_vars_df$final_coefs[[v]] <- coef_final
+        
+      } else if (length(sel_vars) == 1) {
+        rec_main <- make_recipe_vsurf(sel_vars, df, outcome_var)
+        final_fit <- caret::train(
+          rec_main, data = df,
+          method = "glm",
+          metric = "RMSE", maximize = FALSE,
+          trControl = caret::trainControl(method = "none"),  # no CV needed
+          family = "gaussian"
+        )
+        
+        coef_final <- coef(final_fit$finalModel)
+        sel_vars_df$final_coefs[[v]] <- coef_final
+        
+      } else {
+        if (v == "VSURF") {
+          rec_main <- make_recipe_vsurf_glmnet(sel_vars, df, outcome_var)
+        } else {
+          rec_main <- make_recipe_after_elas(sel_vars, df, outcome_var)
+        }
+        
+        final_fit <- caret::train(
+          rec_main, data = df,
+          method = "glmnet",
+          metric = "RMSE", maximize = FALSE,
+          tuneGrid = tg,
+          trControl = ctrl_inner,  
+          family = "gaussian",
+          standardize = FALSE
+        )
+        
+        coefs_2 <- as.matrix(coef(final_fit$finalModel,
+                                  s = final_fit$bestTune$lambda[1]))[, 1]
+        sel_vars_df$final_coefs[[v]] <- coefs_2[coefs_2 != 0]
+      }
+      message(sprintf("Final model coefficients (after %s preselection):\n", v))
+      print(sel_vars_df$final_coefs[[v]])
+    }
+    return(list(
+      final_model = final_fit,
+      sel_vars_df = sel_vars_df,
+      vsurf_object = vs,
+      elasticnet_object = elas_pre
+    ))
+  } else {
+    stop("family must be either 'binomial' or 'gaussian'.")
+  }
+}
+    
+    
+    
+    
+    
+    
+    
+    
+    
+      
+                           
+                           
