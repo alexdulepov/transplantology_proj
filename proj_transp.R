@@ -185,8 +185,14 @@ results = nested_elastic_binary_outcome(
   cv_outer_folds = 5,
   cv_outer_repeats = 20,
   seed = 1,
-  alpha_grid = seq(0, 1, by = 0.1),
-  lambda_grid = 10^seq(-4, 1, length.out = 50))
+  alpha_grid  = seq(0, 1, by = 0.1),
+  lambda_grid = 10^seq(-4, 1, length.out = 50),
+  ntree = 1000,
+  nforests = 20,
+  inner_cv_method = "LOOCV",
+  inner_cv_repeats = 20,
+  inner_cv_folds = 5,
+  selection_rule = "best")
 
 # ---- Inner resample summaries ----
 inner_res <- inner_model_perf_nested_binary(trained_object = results)
@@ -298,15 +304,15 @@ fin_mpd = final_model_with_coefs(df_imp_1,
                                    outcome_var = "outcome",
                                    positive_class = "Yes",
                                    negative_class = "No",
-                                   family = "gaussian",
-                                   cv_method = "repeatedcv",
+                                   family = "binomial",
+                                   cv_method = "LOOCV",
                                    cv_folds = 5,
                                    cv_repeats = 20,
                                    alpha_grid  = seq(0, 1, by = 0.1),
-                                   lambda_grid = 10^seq(-4, 1, length.out = 20),
+                                   lambda_grid = 10^seq(-4, 1, length.out = 100),
                                    ntree = 1000,
-                                   nfor = 20,
-                                   selection_rule = "oneSE")
+                                   nforests = 20,
+                                   selection_rule = "best")
 ##############################################################################################Manual calculation of probs using coefs
 new_case = df_imp_1 %>%
   slice(1) %>%

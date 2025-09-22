@@ -11,13 +11,41 @@ nested_elastic_binary_outcome <- function(
     alpha_grid  = seq(0, 1, by = 0.1),
     lambda_grid = 10^seq(-4, 1, length.out = 50),
     ntree = 1000,
-    nfor = 20
+    nforests = 20,
+    inner_cv_method = c("LOOCV", "repeatedcv"),
+    inner_cv_repeats = 20,
+    inner_cv_folds = 5,
+    selection_rule = c("best", "oneSE")
 ) {
   # ---- Reproducible RNG ----
   RNGkind("L'Ecuyer-CMRG")
   set.seed(seed)
+  cv_method <- match.arg(inner_cv_method)
+  selection_rule <- match.arg(selection_rule)
   
-  message(sprintf("IMPORTANT: All perfomance metrics and models are built around the predicted probability of the positive class: '%s'", positive_class))
+  message(sprintf("IMPORTANT: All performance metrics and models are built around the predicted probability of the positive class: '%s'", positive_class))
+  
+  # ---- Input checks ----
+  if (cv_method == "LOOCV") {
+    message("Inner CV method: LOOCV (Leave-One-Out Cross-Validation)")
+  } else if (cv_method == "repeatedcv") {
+    message(sprintf("Inner CV method: %d-fold CV, repeated %d times", inner_cv_folds, inner_cv_repeats))
+  } else {
+    stop("inner_cv_method must be either 'LOOCV' or 'repeatedcv'.")
+  }
+  
+  # Validate selection_rule
+  if (selection_rule == "best") {
+    message("Final model will use the hyperparameters with the best inner CV performance.")
+  } else if (selection_rule == "oneSE") {
+    message("Final model will use the most regularized hyperparameters (parsimonious model) within 1 SE of the best inner CV performance.")
+  } else  {
+    stop("selection_rule must be either 'best' or 'oneSE'.")
+  }
+  
+  if (selection_rule == "oneSE" && cv_method == "LOOCV") {
+    stop("selection_rule = 'oneSE' is not compatible with LOOCV. Choose cv_method = 'repeatedcv' instead.")
+  }
   
   # ---- Outcome factor with explicit order: negative first ----
   if (!all(c(negative_class, positive_class) %in% unique(df[[outcome_var]]))) {
@@ -90,14 +118,30 @@ nested_elastic_binary_outcome <- function(
   tg <- expand.grid(alpha = alpha_grid, lambda = lambda_grid)
   
   # ---- Inner CV control (optimizes logLoss) ----
-  ctrl_inner <- caret::trainControl(
-    method = "LOOCV",
-    classProbs = TRUE,
-    savePredictions = "final",
-    summaryFunction = caret::mnLogLoss,
-    verboseIter = FALSE,
-    allowParallel = FALSE
-  )
+  if (selection_rule == "best") {
+    ctrl_inner <- caret::trainControl(
+      method = cv_method,
+      number = if (cv_method == "repeatedcv") inner_cv_folds else NA,
+      repeats = if (cv_method == "repeatedcv") inner_cv_repeats else NA,
+      savePredictions = "final",
+      classProbs = TRUE,
+      summaryFunction = caret::mnLogLoss,
+      verboseIter = FALSE,
+      allowParallel = TRUE
+    )
+  } else if (selection_rule == "oneSE") {
+    ctrl_inner <- caret::trainControl(
+      method = cv_method,
+      number = if (cv_method == "repeatedcv") inner_cv_folds else NA,
+      repeats = if (cv_method == "repeatedcv") inner_cv_repeats else NA,
+      savePredictions = "final",
+      classProbs = TRUE,
+      summaryFunction = caret::mnLogLoss,
+      selectionFunction = "oneSE",
+      verboseIter = FALSE,
+      allowParallel = TRUE
+    )
+  }
   
   n_outer <- length(cv_outer_train_folds_rows)
   
@@ -132,7 +176,7 @@ nested_elastic_binary_outcome <- function(
     outer_d_test    <- df[outer_test_idx,  , drop = FALSE]
     
     tab <- table(outer_d_train[[outcome_var]])
-    message(sprintf("Outer %d class counts in the training fold: %s",
+    message(sprintf("OUTER %d - class counts in the training fold: %s",
                     i, paste(sprintf("%s=%d", names(tab), tab), collapse=", ")))
     
     # Keep negative first consistently
@@ -155,11 +199,11 @@ nested_elastic_binary_outcome <- function(
     vs <- VSURF::VSURF(
       y = y_train,
       x = x_train,
-      ntree.thres   = ntree, nfor.thres  = nfor,
-      ntree.interp  = ntree, nfor.interp = nfor,
-      ntree.pred    = ntree, nfor.pred   = nfor,
+      ntree.thres   = ntree, nfor.thres  = nforests,
+      ntree.interp  = ntree, nfor.interp = nforests,
+      ntree.pred    = ntree, nfor.pred   = nforests,
       RFimplem = "ranger",
-      parallel = TRUE
+      parallel = FALSE
     )
     
     sel_idx <- vs$varselect.interp
@@ -479,7 +523,7 @@ nested_elastic_binary_outcome <- function(
 }
 
 # ---- Inner resample summaries ----
-inner_model_perf_nested_binary <- function(trained_object) {
+inner_perf_nested_binary <- function(trained_object) {
   get_metrics <- function(m_list) {
     dplyr::bind_rows(lapply(m_list, function(x) as.data.frame(x$metrics)))
   }
@@ -511,11 +555,11 @@ inner_model_perf_nested_binary <- function(trained_object) {
 
 
 # ---- Outer performance on averaged predictions ----
-outer_model_perf_nested_binary <- function(trained_object,
+outer_perf_nested_binary <- function(trained_object,
                                            positive_class = "Yes",
                                            negative_class = "No") {
   
-  message(sprintf("IMPORTANT: All perfomance metrics are built around the predicted probability of the positive class: '%s'", positive_class))
+  message(sprintf("IMPORTANT: All performance metrics are built around the predicted probability of the positive class: '%s'", positive_class))
   
   # ---- Variable selection stability ----
   stab_table <- function(sel_list) {
@@ -599,11 +643,20 @@ nested_elastic_continuous_outcome <- function(
     alpha_grid  = seq(0, 1, by = 0.1),
     lambda_grid = 10^seq(-4, 1, length.out = 50),
     ntree = 1000,
-    nfor = 20
+    nforests = 20,
+    inner_cv_method = c("LOOCV", "repeatedcv"),
+    inner_cv_repeats = 20,
+    inner_cv_folds = 5,
+    selection_rule = c("best", "oneSE"),
+    optim_metric = c("RMSE", "MAE")
 ) {
   # ---- Reproducible RNG ----
   RNGkind("L'Ecuyer-CMRG")
   set.seed(seed)
+  cv_method <- match.arg(inner_cv_method)
+  selection_rule <- match.arg(selection_rule)
+  metric <- match.arg(optim_metric)
+  
   
   # ---- Pre-checks ----
   pred_names <- setdiff(names(df), outcome_var)
@@ -615,6 +668,28 @@ nested_elastic_continuous_outcome <- function(
   
   if (any(vapply(df[pred_names], is.character, TRUE))) {
     message("Note: character predictors found; converting via step_string2factor().")
+  }
+  
+  # ---- Input checks ----
+  if (cv_method == "LOOCV") {
+    message("Inner CV method: LOOCV (Leave-One-Out Cross-Validation)")
+  } else if (cv_method == "repeatedcv") {
+    message(sprintf("Inner CV method: %d-fold CV, repeated %d times", inner_cv_folds, inner_cv_repeats))
+  } else {
+    stop("inner_cv_method must be either 'LOOCV' or 'repeatedcv'.")
+  }
+  
+  # Validate selection_rule
+  if (selection_rule == "best") {
+    message("Final model will use the hyperparameters with the best inner CV performance.")
+  } else if (selection_rule == "oneSE") {
+    message("Final model will use the most regularized hyperparameters (parsimonious model) within 1 SE of the best inner CV performance.")
+  } else  {
+    stop("selection_rule must be either 'best' or 'oneSE'.")
+  }
+  
+  if (selection_rule == "oneSE" && cv_method == "LOOCV") {
+    stop("selection_rule = 'oneSE' is not compatible with LOOCV. Choose cv_method = 'repeatedcv' instead.")
   }
   
   # ---- Outer resampling indices ----
@@ -664,13 +739,28 @@ nested_elastic_continuous_outcome <- function(
   tg <- expand.grid(alpha = alpha_grid, lambda = lambda_grid)
   
   # ---- Inner CV control (regression) ----
-  ctrl_inner <- caret::trainControl(
-    method = "LOOCV",
-    savePredictions = "final",
-    summaryFunction = caret::defaultSummary,
-    verboseIter = FALSE,
-    allowParallel = FALSE
-  )
+  if (selection_rule == "best") {
+    ctrl_inner <- caret::trainControl(
+      method = cv_method,
+      number = if (cv_method == "repeatedcv") inner_cv_folds else NA,
+      repeats = if (cv_method == "repeatedcv") inner_cv_repeats else NA,
+      savePredictions = "final",
+      summaryFunction = caret::defaultSummary,
+      verboseIter = FALSE,
+      allowParallel = TRUE
+    )
+  } else if (selection_rule == "oneSE") {
+    ctrl_inner <- caret::trainControl(
+      method = cv_method,
+      number = if (cv_method == "repeatedcv") inner_cv_folds else NA,
+      repeats = if (cv_method == "repeatedcv") inner_cv_repeats else NA,
+      savePredictions = "final",
+      summaryFunction = caret::defaultSummary,
+      selectionFunction = "oneSE",
+      verboseIter = FALSE,
+      allowParallel = TRUE
+    )
+  }
   
   n_outer <- length(cv_outer_train_folds_rows)
   
@@ -716,11 +806,11 @@ nested_elastic_continuous_outcome <- function(
     vs <- VSURF::VSURF(
       y = y_train,
       x = x_train,
-      ntree.thres   = ntree, nfor.thres  = nfor,
-      ntree.interp  = ntree, nfor.interp = nfor,
-      ntree.pred    = ntree, nfor.pred   = nfor,
+      ntree.thres   = ntree, nfor.thres  = nforests,
+      ntree.interp  = ntree, nfor.interp = nforests,
+      ntree.pred    = ntree, nfor.pred   = nforests,
       RFimplem = "ranger",
-      parallel = TRUE
+      parallel = FALSE
     )
     sel_idx <- vs$varselect.interp
     vsurf_sel_vars <- if (length(sel_idx)) colnames(x_train)[sel_idx] else character(0)
@@ -734,7 +824,7 @@ nested_elastic_continuous_outcome <- function(
       rec_all_elas,
       data = outer_d_train,
       method = "glmnet",
-      metric = "RMSE",
+      metric = metric,
       maximize = FALSE,
       tuneGrid = tg,
       trControl = ctrl_inner,
@@ -757,7 +847,7 @@ nested_elastic_continuous_outcome <- function(
     fit_avg <- caret::train(
       rec_avg, data = outer_d_train,
       method = "glm",
-      metric = "RMSE", maximize = FALSE,
+      metric = metric, maximize = FALSE,
       trControl = caret::trainControl(method = "none"),  # no CV needed
       family = gaussian()
     )
@@ -787,7 +877,7 @@ nested_elastic_continuous_outcome <- function(
           fit_inner <- caret::train(
             rec_main, data = outer_d_train,
             method = "glm",
-            metric = "RMSE", maximize = FALSE,
+            metric = metric, maximize = FALSE,
             trControl = ctrl_inner, family = "gaussian"
           )
         } else if (length(vars) == 1) {
@@ -795,7 +885,7 @@ nested_elastic_continuous_outcome <- function(
           fit_inner <- caret::train(
             rec_main, data = outer_d_train,
             method = "glm",
-            metric = "RMSE", maximize = FALSE,
+            metric = metric, maximize = FALSE,
             trControl = ctrl_inner, family = "gaussian"
           )
         } else {
@@ -803,7 +893,7 @@ nested_elastic_continuous_outcome <- function(
           fit_inner <- caret::train(
             rec_main, data = outer_d_train,
             method = "glmnet",
-            metric = "RMSE", maximize = FALSE,
+            metric = metric, maximize = FALSE,
             tuneGrid = tg, trControl = ctrl_inner,
             family = "gaussian", standardize = FALSE
           )
@@ -815,7 +905,7 @@ nested_elastic_continuous_outcome <- function(
           fit_inner <- caret::train(
             rec_main, data = outer_d_train,
             method = "glm",
-            metric = "RMSE", maximize = FALSE,
+            metric = metric, maximize = FALSE,
             trControl = ctrl_inner, family = "gaussian"
           )
         } else if (length(vars) == 1) {
@@ -823,7 +913,7 @@ nested_elastic_continuous_outcome <- function(
           fit_inner <- caret::train(
             rec_main, data = outer_d_train,
             method = "glm",
-            metric = "RMSE", maximize = FALSE,
+            metric = metric, maximize = FALSE,
             trControl = ctrl_inner, family = "gaussian"
           )
         } else {
@@ -831,7 +921,7 @@ nested_elastic_continuous_outcome <- function(
           fit_inner <- caret::train(
             rec_main, data = outer_d_train,
             method = "glmnet",
-            metric = "RMSE", maximize = FALSE,
+            metric = metric, maximize = FALSE,
             tuneGrid = tg, trControl = ctrl_inner,
             family = "gaussian", standardize = FALSE
           )
@@ -860,15 +950,6 @@ nested_elastic_continuous_outcome <- function(
       r2_tradval <- yardstick::rsq_trad(inner_dat, truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
       ccc_val    <- yardstick::ccc(inner_dat, truth, pred, na_rm = TRUE) |> dplyr::pull(.estimate)
       
-      if (fit_inner[["method"]] == "glmnet") {
-        rmse_caret <- fit_inner$results |>
-          dplyr::filter(alpha == fit_inner$bestTune$alpha,
-                        lambda == fit_inner$bestTune$lambda) |>
-          dplyr::pull(RMSE)
-      } else {
-        rmse_caret <- fit_inner$results$RMSE[1]
-      }
-      
       # ---- Predict on outer test ----
       p_out <- predict(fit_inner, newdata = outer_d_test)
       
@@ -890,7 +971,6 @@ nested_elastic_continuous_outcome <- function(
         inner_idx = outer_train_idx[inner_preds$rowIndex],
         metrics  = list(
           rmse = rmse_val,
-          rmse_caret = rmse_caret,
           mae  = mae_val,
           r2   = r2_val,
           r2_trad = r2_tradval,
@@ -1010,7 +1090,7 @@ nested_elastic_continuous_outcome <- function(
 }
 
 
-inner_model_perf_nested_regression <- function(trained_object) {
+inner_perf_nested_continuous <- function(trained_object) {
   get_metrics <- function(m_list) {
     dplyr::bind_rows(lapply(m_list, function(x) as.data.frame(x$metrics)))
   }
@@ -1022,7 +1102,6 @@ inner_model_perf_nested_regression <- function(trained_object) {
     dplyr::summarise(
       df,
       rmse_mean = mean(rmse, na.rm = TRUE),             rmse_sd = sd(rmse, na.rm = TRUE),
-      rmse_caret_mean = mean(rmse_caret, na.rm = TRUE), rmse_caret_sd = sd(rmse_caret, na.rm = TRUE),
       mae_mean  = mean(mae,  na.rm = TRUE),             mae_sd  = sd(mae,  na.rm = TRUE),
       r2_mean   = mean(r2,   na.rm = TRUE),             r2_sd   = sd(r2,   na.rm = TRUE),
       r2_trad_mean = mean(r2_trad, na.rm = TRUE),       r2_trad_sd = sd(r2_trad, na.rm = TRUE),
@@ -1039,7 +1118,7 @@ inner_model_perf_nested_regression <- function(trained_object) {
   dplyr::bind_rows(vs_summary, elas_summary) |> dplyr::select(method, dplyr::everything())
 }
 
-outer_model_perf_nested_regression <- function(trained_object) {
+outer_perf_nested_continuous <- function(trained_object) {
   stab_table <- function(sel_list, n_outer) {
     tbl <- sort(table(unlist(sel_list)), decreasing = TRUE)
     as.data.frame(tbl, stringsAsFactors = FALSE) |>
@@ -1104,12 +1183,14 @@ final_model_with_coefs <- function(df,
                                     alpha_grid  = seq(0, 1, by = 0.1),
                                     lambda_grid = 10^seq(-4, 1, length.out = 50),
                                     ntree = 1000,
-                                    nfor = 20,
-                                    selection_rule = c("best", "oneSE")) {
+                                    nforests = 20,
+                                    selection_rule = c("best", "oneSE"),
+                                    cont_optim_metric = c("RMSE", "MAE")) {
   
   family <- match.arg(family)
   cv_method <- match.arg(cv_method)
   selection_rule <- match.arg(selection_rule)
+  metric <- match.arg(cont_optim_metric)
   set.seed(1)
   
   if (selection_rule == "best") {
@@ -1186,11 +1267,11 @@ final_model_with_coefs <- function(df,
     vs <- VSURF::VSURF(
       y = y_train,
       x = x_train,
-      ntree.thres   = ntree, nfor.thres  = nfor,
-      ntree.interp  = ntree, nfor.interp = nfor,
-      ntree.pred    = ntree, nfor.pred   = nfor,
+      ntree.thres   = ntree, nfor.thres  = nforests,
+      ntree.interp  = ntree, nfor.interp = nforests,
+      ntree.pred    = ntree, nfor.pred   = nforests,
       RFimplem = "ranger",
-      parallel = TRUE
+      parallel = FALSE
     )
     sel_idx_int <- vs$varselect.interp
     sel_idx_pred <- vs$varselect.pred
@@ -1211,7 +1292,7 @@ final_model_with_coefs <- function(df,
         classProbs = TRUE,
         summaryFunction = caret::mnLogLoss,
         verboseIter = FALSE,
-        allowParallel = FALSE
+        allowParallel = TRUE
       )
     } else if (selection_rule == "oneSE") {
       ctrl_inner <- caret::trainControl(
@@ -1223,7 +1304,7 @@ final_model_with_coefs <- function(df,
         summaryFunction = caret::mnLogLoss,
         selectionFunction = "oneSE",
         verboseIter = FALSE,
-        allowParallel = FALSE
+        allowParallel = TRUE
       )
     }
     
@@ -1259,12 +1340,13 @@ final_model_with_coefs <- function(df,
     
     #---- Final model ----
     sel_vars_df <- tibble::tibble(
-      elastic_single_coef = list(coef_elas_only),
-      vsurf_sel_vars_int_step   = list(vsurf_sel_vars_int),
+      elastic_single_coef      = list(coef_elas_only),
+      vsurf_sel_vars_int_step  = list(vsurf_sel_vars_int),
       vsurf_sel_vars_pred_step = list(vsurf_sel_vars_pred),
-      final_coefs      = vector("list", 2L)
+      final_coefs              = list(list(VSURF = NULL, ElasticNet = NULL)) 
     )
-    names(sel_vars_df$final_coefs) <- c("VSURF", "ElasticNet")
+    
+    final_fits <- list()
     
     for (v in c("VSURF", "ElasticNet")) {
       message(sprintf("\nFitting final elastic-net model using %s-selected variables...", v))
@@ -1284,8 +1366,9 @@ final_model_with_coefs <- function(df,
           family = "binomial"
         )
         
+        final_fits[[v]] <- final_fit
         coef_final <- coef(final_fit$finalModel)
-        sel_vars_df$final_coefs[[v]] <- coef_final
+        sel_vars_df$final_coefs[[1]][[v]] <- coef_final
         
       } else if (length(sel_vars) == 1) {
         rec_main <- make_recipe_vsurf(sel_vars, df, outcome_var)
@@ -1297,8 +1380,9 @@ final_model_with_coefs <- function(df,
           family = "binomial"
         )
         
+        final_fits[[v]] <- final_fit
         coef_final <- coef(final_fit$finalModel)
-        sel_vars_df$final_coefs[[v]] <- coef_final
+        sel_vars_df$final_coefs[[1]][[v]] <- coef_final
         
       } else {
         if (v == "VSURF") {
@@ -1317,15 +1401,16 @@ final_model_with_coefs <- function(df,
           standardize = FALSE
         )
         
+        final_fits[[v]] <- final_fit
         coefs_2 <- as.matrix(coef(final_fit$finalModel,
                                   s = final_fit$bestTune$lambda[1]))[, 1]
-        sel_vars_df$final_coefs[[v]] <- coefs_2[coefs_2 != 0]
+        sel_vars_df$final_coefs[[1]][[v]] <- coefs_2[coefs_2 != 0]
       }
       message(sprintf("Final model coefficients (after %s preselection):\n", v))
-      print(sel_vars_df$final_coefs[[v]])
+      print(sel_vars_df$final_coefs[[1]][[v]])
     }
     return(list(
-      final_model = final_fit,
+      final_model = final_fits,
       sel_vars_df = sel_vars_df,
       vsurf_object = vs,
       elasticnet_object = elas_pre
@@ -1390,11 +1475,11 @@ final_model_with_coefs <- function(df,
     vs <- VSURF::VSURF(
       y = y_train,
       x = x_train,
-      ntree.thres   = ntree, nfor.thres  = nfor,
-      ntree.interp  = ntree, nfor.interp = nfor,
-      ntree.pred    = ntree, nfor.pred   = nfor,
+      ntree.thres   = ntree, nfor.thres  = nforests,
+      ntree.interp  = ntree, nfor.interp = nforests,
+      ntree.pred    = ntree, nfor.pred   = nforests,
       RFimplem = "ranger",
-      parallel = TRUE
+      parallel = FALSE
     )
     sel_idx_int <- vs$varselect.interp
     sel_idx_pred <- vs$varselect.pred
@@ -1412,9 +1497,9 @@ final_model_with_coefs <- function(df,
         number = if (cv_method == "repeatedcv") cv_folds else NA,
         repeats = if (cv_method == "repeatedcv") cv_repeats else NA,
         savePredictions = "final",
-        summaryFunction = defaultSummary,
+        summaryFunction = caret::defaultSummary,
         verboseIter = FALSE,
-        allowParallel = FALSE
+        allowParallel = TRUE
       )
     } else if (selection_rule == "oneSE") {
       ctrl_inner <- caret::trainControl(
@@ -1422,10 +1507,10 @@ final_model_with_coefs <- function(df,
         number = if (cv_method == "repeatedcv") cv_folds else NA,
         repeats = if (cv_method == "repeatedcv") cv_repeats else NA,
         savePredictions = "final",
-        summaryFunction = defaultSummary,
+        summaryFunction = caret::defaultSummary,
         selectionFunction = "oneSE",
         verboseIter = FALSE,
-        allowParallel = FALSE
+        allowParallel = TRUE
       )
     }
     
@@ -1441,7 +1526,7 @@ final_model_with_coefs <- function(df,
       rec_all,
       data = df,
       method = "glmnet",
-      metric = "RMSE",
+      metric = metric,
       maximize = FALSE,
       tuneGrid = tg,
       trControl = ctrl_inner,
@@ -1461,13 +1546,14 @@ final_model_with_coefs <- function(df,
     
     #---- Final model ----
     sel_vars_df <- tibble::tibble(
-      elastic_single_coef = list(coef_elas_only),
-      vsurf_sel_vars_int_step   = list(vsurf_sel_vars_int),
+      elastic_single_coef      = list(coef_elas_only),
+      vsurf_sel_vars_int_step  = list(vsurf_sel_vars_int),
       vsurf_sel_vars_pred_step = list(vsurf_sel_vars_pred),
-      final_coefs      = vector("list", 2L)
+      final_coefs              = list(list(VSURF = NULL, ElasticNet = NULL))  
     )
-    names(sel_vars_df$final_coefs) <- c("VSURF", "ElasticNet")
     
+    final_fits <- list()
+
     for (v in c("VSURF", "ElasticNet")) {
       message(sprintf("\nFitting final elastic-net model using %s-selected variables...", v))
       if (v == "VSURF") {
@@ -1481,26 +1567,28 @@ final_model_with_coefs <- function(df,
         final_fit <- caret::train(
           rec_main, data = df,
           method = "glm",
-          metric = "RMSE", maximize = FALSE,
+          metric = metric, maximize = FALSE,
           trControl = caret::trainControl(method = "none"),  # no CV needed
           family = "gaussian"
         )
         
+        final_fits[[v]] <- final_fit
         coef_final <- coef(final_fit$finalModel)
-        sel_vars_df$final_coefs[[v]] <- coef_final
+        sel_vars_df$final_coefs[[1]][[v]] <- coef_final
         
       } else if (length(sel_vars) == 1) {
         rec_main <- make_recipe_vsurf(sel_vars, df, outcome_var)
         final_fit <- caret::train(
           rec_main, data = df,
           method = "glm",
-          metric = "RMSE", maximize = FALSE,
+          metric = metric, maximize = FALSE,
           trControl = caret::trainControl(method = "none"),  # no CV needed
           family = "gaussian"
         )
         
+        final_fits[[v]] <- final_fit
         coef_final <- coef(final_fit$finalModel)
-        sel_vars_df$final_coefs[[v]] <- coef_final
+        sel_vars_df$final_coefs[[1]][[v]] <- coef_final
         
       } else {
         if (v == "VSURF") {
@@ -1512,22 +1600,23 @@ final_model_with_coefs <- function(df,
         final_fit <- caret::train(
           rec_main, data = df,
           method = "glmnet",
-          metric = "RMSE", maximize = FALSE,
+          metric = metric, maximize = FALSE,
           tuneGrid = tg,
           trControl = ctrl_inner,  
           family = "gaussian",
           standardize = FALSE
         )
         
+        final_fits[[v]] <- final_fit
         coefs_2 <- as.matrix(coef(final_fit$finalModel,
                                   s = final_fit$bestTune$lambda[1]))[, 1]
-        sel_vars_df$final_coefs[[v]] <- coefs_2[coefs_2 != 0]
+        sel_vars_df$final_coefs[[1]][[v]] <- coefs_2[coefs_2 != 0]
       }
       message(sprintf("Final model coefficients (after %s preselection):\n", v))
-      print(sel_vars_df$final_coefs[[v]])
+      print(sel_vars_df$final_coefs[[1]][[v]])
     }
     return(list(
-      final_model = final_fit,
+      final_model = final_fits,
       sel_vars_df = sel_vars_df,
       vsurf_object = vs,
       elasticnet_object = elas_pre
@@ -1536,15 +1625,4 @@ final_model_with_coefs <- function(df,
     stop("family must be either 'binomial' or 'gaussian'.")
   }
 }
-    
-    
-    
-    
-    
-    
-    
-    
-    
-      
-                           
-                           
+                          

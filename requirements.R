@@ -1,32 +1,24 @@
 # R Package Requirements for Nested LOOCV with VSURF and Elastic Net
 # Install these packages before running the main script
 
-# Core packages
-install.packages("VSURF")
-install.packages("caret")
-install.packages("glmnet")
-install.packages("tidyverse")
-install.packages("recipes")
-install.packages("ModelMetrics")
-install.packages("yardstick")
-install.packages("MLeval")
-install.packages("prg")
-install.packages("CalibrationCurves")
-install.packages("dcurves")
-install.packages("readxl")
-install.packages("statip")
-install.packages("pheatmap")
-install.packages("janitor")
-install.packages("doParallel")
+# Core + extras
+install.packages(c(
+  "VSURF","caret","glmnet","tidyverse","recipes","ModelMetrics","yardstick",
+  "MLeval","CalibrationCurves","dcurves","readxl","statip","pheatmap","janitor",
+  "doParallel","devtools","ranger","kknn","foreach","iterators","VIM"
+))
 
-# Load all packages to check if they're working
+library(devtools)
+devtools::install_github("meeliskull/prg", subdir = "R_package/prg")
+
+# Load
 library(caret)
 library(tidyverse)
 library(ModelMetrics)
 library(recipes)
 library(glmnet)
 library(yardstick)
-library(MLeval)    
+library(MLeval)
 library(doParallel)
 library(VSURF)
 library(prg)
@@ -37,5 +29,6 @@ library(statip)
 library(pheatmap)
 library(VIM)
 library(janitor)
+
 
 cat("All packages loaded successfully!\n")
