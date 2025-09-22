@@ -54,7 +54,8 @@ outer_perf  <- outer_perf_nested_binary(results, positive_class = "Yes")
 
 - `avg_final_outer_preds_vs` / `avg_final_outer_preds_elas` – averaged outer-fold probabilities from VSURF-preselected and elastic-net-self-selected models alongside `outer_y` labels.
 - `avg_inner_biased_preds_vs` / `avg_inner_biased_preds_elas` – averaged inner-loop predictions used for hyper-parameter selection.
-- `avg_final_outer_preds_single_elas` – performance for elastic net without prior VSURF selection and the corresponding baseline prevalence model predictions.
+- `avg_final_outer_preds_single_elas` – averaged outer-fold probabilities from elastic net without prior VSURF selection.
+- `avg_final_outer_preds_prev` – averaged outer-fold probabilities from prevalence (baseline) model.
 - `sel_vars_df` – for each outer resample, the variables chosen by VSURF and elastic net plus the coefficients of the final refit.
 - `inner_perf` – fold-level metrics (ROC AUC, PR AUC, AUPRG, LogLoss, Brier score, MCC, calibration slope/intercept, etc.).
 
@@ -111,9 +112,10 @@ Set `family = "gaussian"` to obtain analogous continuous-outcome fits.
 ## Customisation Highlights
 
 - **Variable selection** – toggle VSURF tree counts (`ntree`, `nforests`) and let elastic net perform its own selection by adjusting `alpha_grid`/`lambda_grid`.
+- **Hyperparameters selection rule** – choose which rule is applied for the hyperparameters selection during the cross-validation (`best` or `oneSE`).
 - **Inner resampling** – choose between leave-one-out (`inner_cv_method = "LOOCV"`) or repeated K-fold cross-validation.  The `oneSE` selection rule is available for repeated CV but not LOOCV.
 - **Optimisation metric** – binary models optimise LogLoss; continuous models can optimise RMSE or MAE via `optim_metric`.
-- **Parallelism** – caret controls and VSURF objects are created with `allowParallel = TRUE`; register a parallel backend before fitting to accelerate large jobs.
+- **Parallelism** – parallelism incorporated by `allowParallel = TRUE` in trainControl and initializing parallel clusters. 
 
 ## Data Preparation Notes
 
