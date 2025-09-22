@@ -1,225 +1,141 @@
-# Nested LOOCV with VSURF and Elastic Net
+# Nested Cross-Validation with VSURF and Elastic Net
 
-This repository contains R code for implementing nested Leave-One-Out Cross-Validation (LOOCV) with VSURF for variable selection and Elastic Net for classification, optimized for PRAUC (Precision-Recall Area Under Curve) and including calibration performance assessment.
+This repository contains a set of R utilities for running nested cross-validation pipelines that combine VSURF-based variable selection with elastic-net modelling.  Workflows are provided for both binary classification and continuous outcomes, together with helper functions for summarising resampling performance and extracting final coefficient sets.
 
-## Features
+## Repository Contents
 
-- **Nested LOOCV**: Outer loop for model evaluation, inner loop for variable selection and parameters optimization
-- **VSURF Variable Selection**: Uses VSURF (Variable Selection Using Random Forests) and elastic net for variable selection (comparison of the 2 methods)
-- **Elastic Net Training**: Elastic net models trained using caret package
-- **LogLoss Optimization**: Minimizes logloss (cross-entropy)
-- **Calibration Assessment**: Comprehensive calibration performance metrics including calibration-in-the large, calibraion slope and calibraion plot
-- **Decision analysis**: Implementation of the decision curve analysis for the assessment of the model clinical utility
-
-## Files
-
-- `nested_loocv_vsurf_elasticnet.R` - Main implementation with all functions
-- `requirements.R` - Package installation requirements
-- `demo_usage.R` - Example usage with sample data
-- `README.md` - This documentation file
+- `Functions_nested_CV(VSURF+elastic_net).R` – core implementation.  Includes:
+  - `nested_elastic_binary_outcome()` / `nested_elastic_continuous_outcome()` for repeated nested resampling.
+  - `inner_perf_nested_*()` and `outer_perf_nested_*()` helpers that turn resampling objects into tidy performance summaries.
+  - `final_model_with_coefs()` to refit a final elastic-net model (after VSURF or self-selection) on the full dataset and return coefficient estimates.
+- `demo_usage.R` – minimal synthetic example that sources the core functions and runs the binary workflow end-to-end.
+- `proj_transp.R` – end-to-end analysis script for a transplant cytokine dataset (data import, cleaning, imputation, exploratory analysis, and VSURF/elastic-net modelling).
+- `requirements.R` – installs and loads the full package stack required by the above scripts.
 
 ## Installation
 
-1. Install required R packages:
+Install the required packages once per R environment:
 
 ```r
 source("requirements.R")
 ```
 
-Or install manually:
-
-```r
-install.packages(c("VSURF", "caret", "pROC", "glmnet", "ggplot2", "dplyr", "PRROC", "randomForest", "e1071"))
-```
+`requirements.R` installs CRAN dependencies (VSURF, caret, glmnet, tidyverse, recipes, ModelMetrics, yardstick, MLeval, CalibrationCurves, dcurves, readxl, statip, pheatmap, janitor, doParallel, devtools, ranger, kknn, foreach, iterators, VIM) and the `prg` package from GitHub before loading everything into the session.
 
 ## Usage
 
-### Basic Usage
+### 1. Binary outcome workflow
 
 ```r
-# Source the main functions
-source("nested_loocv_vsurf_elasticnet.R")
+source("Functions_nested_CV(VSURF+elastic_net).R")
 
-# Load your data
-data <- read.csv("your_data.csv")
-X <- data[, -ncol(data)]  # Features
-y <- data[, ncol(data)]   # Target variable
+# Data frame 'df' must contain the outcome column plus predictors
+# All numeric predictors should be non-negative because log1p preprocessing is applied
 
-# Ensure target is binary (0/1 or factor)
-y <- as.factor(y)
-
-# Run nested LOOCV
-results <- nested_loocv_vsurf_elasticnet(X, y)
-
-# Print summary
-print_summary(results)
-
-# Plot calibration
-cal_plot <- plot_calibration(results$calibration)
-print(cal_plot)
-```
-
-### Demo with Sample Data
-
-```r
-# Run the demo to see the system in action
-source("demo_usage.R")
-```
-
-## Function Details
-
-### Main Function: `nested_loocv_vsurf_elasticnet()`
-
-**Parameters:**
-- `X`: Feature matrix (n_samples × n_features)
-- `y`: Target variable vector (binary)
-- `n_outer_folds`: Number of outer CV folds (NULL for LOOCV)
-
-**Returns:**
-- `outer_results`: Results for each outer fold
-- `overall_predictions`: Combined predictions across all folds
-- `overall_actuals`: Actual target values
-- `overall_prauc`: Overall PRAUC performance
-- `calibration`: Calibration performance metrics
-- `selected_variables_summary`: Summary of variable selection frequency
-
-### Variable Selection: `perform_vsurf_selection()`
-
-Uses VSURF algorithm to select interpretable variables:
-- Random forest-based variable importance
-- Three-step selection process (thresholding, interpretation, prediction)
-- Returns interpretation set variables
-
-### Elastic Net Training: `train_elastic_net()`
-
-Grid search over alpha and lambda parameters:
-- Alpha: Mixing parameter (0 = Ridge, 1 = Lasso)
-- Lambda: Regularization strength
-- Optimizes for PRAUC on validation set
-
-### Calibration Assessment: `assess_calibration()`
-
-Provides comprehensive calibration metrics:
-- **ECE (Expected Calibration Error)**: Average absolute difference between predicted and observed probabilities
-- **Hosmer-Lemeshow Statistic**: Chi-squared test for calibration
-- **Calibration Plot**: Visual assessment of probability calibration
-
-## Output Interpretation
-
-### Performance Metrics
-
-- **PRAUC**: Precision-Recall AUC (higher is better, range 0-1)
-- **Calibration ECE**: Expected Calibration Error (lower is better, range 0-1)
-- **Hosmer-Lemeshow**: Chi-squared statistic for calibration (lower p-value indicates better calibration)
-
-### Variable Selection
-
-- **Selection Frequency**: How often each variable is selected across folds
-- **Interpretation Set**: Variables selected by VSURF for interpretability
-- **Stability**: Consistency of variable selection across folds
-
-## Customization Options
-
-### VSURF Parameters
-
-```r
-# Modify VSURF parameters in perform_vsurf_selection()
-vsurf_result <- VSURF(x = X_train, y = y_train, 
-                      ntree = 200,           # Number of trees
-                      mtry = sqrt(ncol(X)),  # Variables per split
-                      parallel = TRUE,       # Enable parallel processing
-                      ncores = 4)            # Number of cores
-```
-
-### Elastic Net Grid
-
-```r
-# Modify parameter grid in train_elastic_net()
-grid <- expand.grid(
-  alpha = seq(0, 1, by = 0.05),           # Finer alpha grid
-  lambda = 10^seq(-6, 2, length.out = 50) # Extended lambda range
+results <- nested_elastic_binary_outcome(
+  df,
+  outcome_var = "outcome",
+  positive_class = "Yes",
+  negative_class = "No",
+  cv_outer_folds = 5,
+  cv_outer_repeats = 20,
+  inner_cv_method = "repeatedcv",
+  inner_cv_folds = 5,
+  inner_cv_repeats = 20,
+  selection_rule = "best"
 )
+
+# Summaries
+inner_perf  <- inner_perf_nested_binary(results)
+outer_perf  <- outer_perf_nested_binary(results, positive_class = "Yes")
 ```
 
-### Calibration Bins
+`nested_elastic_binary_outcome()` returns nested CV predictions and metadata, including:
+
+- `avg_final_outer_preds_vs` / `avg_final_outer_preds_elas` – averaged outer-fold probabilities from VSURF-preselected and elastic-net-self-selected models alongside `outer_y` labels.
+- `avg_inner_biased_preds_vs` / `avg_inner_biased_preds_elas` – averaged inner-loop predictions used for hyper-parameter selection.
+- `avg_final_outer_preds_single_elas` – performance for elastic net without prior VSURF selection and the corresponding baseline prevalence model predictions.
+- `sel_vars_df` – for each outer resample, the variables chosen by VSURF and elastic net plus the coefficients of the final refit.
+- `inner_perf` – fold-level metrics (ROC AUC, PR AUC, AUPRG, LogLoss, Brier score, MCC, calibration slope/intercept, etc.).
+
+The helper `outer_perf_nested_binary()` also prints stability tables showing how frequently each predictor is selected across outer folds and returns a tidy tibble of outer vs. inner performance metrics.
+
+### 2. Continuous outcome workflow
 
 ```r
-# Modify number of calibration bins
-calibration_result <- assess_calibration(actual, predicted_probs, n_bins = 20)
+reg_results <- nested_elastic_continuous_outcome(
+  df,
+  outcome_var = "outcome",
+  cv_outer_folds = 5,
+  cv_outer_repeats = 20,
+  inner_cv_method = "repeatedcv",
+  inner_cv_folds = 5,
+  inner_cv_repeats = 20,
+  selection_rule = "best",
+  optim_metric = "RMSE"
+)
+
+inner_reg  <- inner_perf_nested_continuous(reg_results)
+outer_reg  <- outer_perf_nested_continuous(reg_results)
 ```
 
-## Performance Considerations
+Continuous workflows mirror the binary setup but report RMSE, MAE, R² (traditional and modern), concordance correlation, MAPE/SMAPE, and calibration diagnostics.
 
-- **LOOCV**: Computationally expensive for large datasets
-- **VSURF**: Can be slow with many features or samples
-- **Grid Search**: Parameter grid size affects training time
-- **Memory**: Large datasets may require significant memory
+### 3. Fit final models on the full dataset
 
-### Optimization Tips
+Use `final_model_with_coefs()` when you are ready to refit a model on all available observations after the resampling study:
 
-1. **Reduce VSURF trees**: Use fewer trees for faster execution
-2. **Coarse parameter grid**: Start with coarse grid, refine later
-3. **Parallel processing**: Enable VSURF parallel processing
-4. **K-fold CV**: Use K-fold instead of LOOCV for large datasets
+```r
+final_bin <- final_model_with_coefs(
+  df,
+  outcome_var = "outcome",
+  positive_class = "Yes",
+  negative_class = "No",
+  family = "binomial",
+  cv_method = "repeatedcv",
+  cv_folds = 5,
+  cv_repeats = 20,
+  selection_rule = "best"
+)
 
-## Example Output
-
-```
-==================================================
-NESTED LOOCV WITH VSURF AND ELASTIC NET RESULTS
-==================================================
-
-Overall Performance:
-Overall PRAUC: 0.8234
-
-Calibration Performance:
-Expected Calibration Error (ECE): 0.0456
-Hosmer-Lemeshow Statistic: 8.2341
-
-Variable Selection Summary:
-Variable 1 selected 95 times
-Variable 2 selected 87 times
-Variable 3 selected 92 times
-...
-
-Outer Fold Results:
-Fold 1 : PRAUC = 0.8123 | Variables = 8
-Fold 2 : PRAUC = 0.8345 | Variables = 7
-...
+# Access VSURF- and elastic-net-based coefficient sets
+final_bin$sel_vars_df$final_coefs
 ```
 
-## Troubleshooting
+Set `family = "gaussian"` to obtain analogous continuous-outcome fits.
 
-### Common Issues
+### 4. Demo script
 
-1. **VSURF errors**: Ensure target variable is factor and features are numeric
-2. **Memory issues**: Reduce VSURF trees or use K-fold CV
-3. **Package conflicts**: Check package versions and dependencies
-4. **Slow execution**: Enable parallel processing where possible
+`demo_usage.R` generates a toy binary dataset, runs `nested_elastic_binary_outcome()`, and produces summaries/plots illustrating how to interrogate the returned object.  Use it as a quick sanity check that all dependencies are installed.
 
-### Error Handling
+## Customisation Highlights
 
-The code includes error handling for:
-- Edge cases in PRAUC calculation
-- VSURF failures
-- Invalid predictions
-- Missing data
+- **Variable selection** – toggle VSURF tree counts (`ntree`, `nforests`) and let elastic net perform its own selection by adjusting `alpha_grid`/`lambda_grid`.
+- **Inner resampling** – choose between leave-one-out (`inner_cv_method = "LOOCV"`) or repeated K-fold cross-validation.  The `oneSE` selection rule is available for repeated CV but not LOOCV.
+- **Optimisation metric** – binary models optimise LogLoss; continuous models can optimise RMSE or MAE via `optim_metric`.
+- **Parallelism** – caret controls and VSURF objects are created with `allowParallel = TRUE`; register a parallel backend before fitting to accelerate large jobs.
 
-## Citation
+## Data Preparation Notes
 
-If you use this code in your research, please cite:
+- Numeric predictors must be ≥ 0 to avoid failures in the `log1p` preprocessing step used by the recipes.
+- Character predictors are converted to factors internally; ensure categorical values are coded consistently across rows.
+- Inspect `proj_transp.R` for a full cleaning pipeline that demonstrates missing-value imputation with `VIM::kNN`, low-variance filtering, correlation checks, and VSURF exploration prior to the nested CV workflow.
 
-- VSURF: Genuer, R., Poggi, J. M., & Tuleau-Malot, C. (2010). Variable selection using random forests. Pattern Recognition Letters, 31(14), 2225-2236.
-- Caret: Kuhn, M. (2008). Building predictive models in R using the caret package. Journal of Statistical Software, 28(5), 1-26.
+## Troubleshooting & Performance Tips
+
+1. Ensure the outcome column contains both class labels specified via `positive_class`/`negative_class` before fitting binary models.
+2. Large nested CV runs (many repeats or high-dimensional predictors) can be computationally intensive—reduce outer repeats or shrink the hyper-parameter grid when prototyping.
+3. If VSURF fails because of limited variability, adjust or remove near-zero-variance predictors (see `proj_transp.R` for an example workflow).
+4. When using the GitHub-hosted `prg` package, confirm that `devtools` is available and that you have internet access during installation.
 
 ## License
 
-This code is provided for educational and research purposes. Please ensure compliance with the licenses of the included packages.
+This code is provided for educational and research purposes.  Please ensure compliance with the licenses of the included packages.
 
 ## Support
 
 For issues or questions:
-1. Check the troubleshooting section
-2. Verify package installations
-3. Review error messages for specific issues
-4. Ensure data format requirements are met
+1. Check the troubleshooting section above.
+2. Verify package installations.
+3. Review console messages for information about class ordering, selection rules, and preprocessing.
+4. Ensure your data meets the format requirements described above.
