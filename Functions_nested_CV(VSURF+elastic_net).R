@@ -77,7 +77,7 @@ nested_elastic_binary_outcome <- function(
       recipes::step_string2factor(recipes::all_nominal_predictors()) |>
       recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
       recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-      recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+      recipes::step_log(recipes::all_numeric_predictors(), offset = 0.001) |>
       recipes::step_center(recipes::all_numeric_predictors()) |>
       recipes::step_scale(recipes::all_numeric_predictors())
     
@@ -103,7 +103,7 @@ nested_elastic_binary_outcome <- function(
       recipes::step_string2factor(recipes::all_nominal_predictors()) |>
       recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
       recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-      recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+      recipes::step_log(recipes::all_numeric_predictors(), offset = 0.001) |>
       recipes::step_center(recipes::all_numeric_predictors()) |>
       recipes::step_scale(recipes::all_numeric_predictors()) |>
       recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
@@ -703,7 +703,7 @@ nested_elastic_continuous_outcome <- function(
       recipes::step_string2factor(recipes::all_nominal_predictors()) |>
       recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
       recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-      recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+      recipes::step_log(recipes::all_numeric_predictors(), offset = 0.001) |>
       recipes::step_center(recipes::all_numeric_predictors()) |>
       recipes::step_scale(recipes::all_numeric_predictors())
     if (!is.null(vars_to_keep)) {
@@ -725,7 +725,7 @@ nested_elastic_continuous_outcome <- function(
       recipes::step_string2factor(recipes::all_nominal_predictors()) |>
       recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
       recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-      recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+      recipes::step_log(recipes::all_numeric_predictors(), offset = 0.001) |>
       recipes::step_center(recipes::all_numeric_predictors()) |>
       recipes::step_scale(recipes::all_numeric_predictors()) |>
       recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
@@ -1216,7 +1216,7 @@ final_model_with_coefs <- function(df,
         recipes::step_string2factor(recipes::all_nominal_predictors()) |>
         recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
         recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-        recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+        recipes::step_log(recipes::all_numeric_predictors(), offset = 0.001) |>
         recipes::step_center(recipes::all_numeric_predictors()) |>
         recipes::step_scale(recipes::all_numeric_predictors())
       
@@ -1242,7 +1242,7 @@ final_model_with_coefs <- function(df,
         recipes::step_string2factor(recipes::all_nominal_predictors()) |>
         recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
         recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-        recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+        recipes::step_log(recipes::all_numeric_predictors(), offset = 0.001) |>
         recipes::step_center(recipes::all_numeric_predictors()) |>
         recipes::step_scale(recipes::all_numeric_predictors()) |>
         recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
@@ -1424,7 +1424,7 @@ final_model_with_coefs <- function(df,
         recipes::step_string2factor(recipes::all_nominal_predictors()) |>
         recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
         recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-        recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+        recipes::step_log(recipes::all_numeric_predictors(), offset = 0.001) |>
         recipes::step_center(recipes::all_numeric_predictors()) |>
         recipes::step_scale(recipes::all_numeric_predictors())
       
@@ -1450,7 +1450,7 @@ final_model_with_coefs <- function(df,
         recipes::step_string2factor(recipes::all_nominal_predictors()) |>
         recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
         recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
-        recipes::step_log(recipes::all_numeric_predictors(), offset = 1) |>
+        recipes::step_log(recipes::all_numeric_predictors(), offset = 0.001) |>
         recipes::step_center(recipes::all_numeric_predictors()) |>
         recipes::step_scale(recipes::all_numeric_predictors()) |>
         recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
