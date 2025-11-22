@@ -33,16 +33,22 @@ source("Functions_nested_CV(VSURF+elastic_net).R")
 # All numeric predictors should be non-negative because log1p preprocessing is applied
 
 results <- nested_elastic_binary_outcome(
-  df,
-  outcome_var = "outcome",
-  positive_class = "Yes",
-  negative_class = "No",
-  cv_outer_folds = 5,
-  cv_outer_repeats = 20,
-  inner_cv_method = "repeatedcv",
-  inner_cv_folds = 5,
-  inner_cv_repeats = 20,
-  selection_rule = "best"
+    df,
+    outcome_var = "outcome",
+    positive_class = "Yes",
+    negative_class = "No",
+    cv_outer_folds = 5,
+    cv_outer_repeats = 20,
+    seed = 1,
+    alpha_grid  = seq(0, 1, by = 0.1),
+    lambda_grid = 10^seq(-4, 1, length.out = 50),
+    ntree = 1000,
+    nforests = 20,
+    inner_cv_method = c("LOOCV", "repeatedcv"),
+    inner_cv_repeats = 20,
+    inner_cv_folds = 5,
+    selection_rule = c("best", "oneSE"),
+    data_transformation = c("YeoJohnson", "log")
 )
 
 # Summaries
@@ -56,7 +62,9 @@ outer_perf  <- outer_perf_nested_binary(results, positive_class = "Yes")
 - `avg_inner_biased_preds_vs` / `avg_inner_biased_preds_elas` – averaged inner-loop predictions used for hyper-parameter selection.
 - `avg_final_outer_preds_single_elas` – averaged outer-fold probabilities from elastic net without prior VSURF selection.
 - `avg_final_outer_preds_prev` – averaged outer-fold probabilities from prevalence (baseline) model.
-- `sel_vars_df` – for each outer resample, the variables chosen by VSURF and elastic net plus the coefficients of the final refit.
+- `avg_final_outer_preds_vsurf_inter` – averaged outer-fold probabilities from VSURF using variables from the interpretation step.
+- `avg_final_outer_preds_vsurf_pred` – averaged outer-fold probabilities from VSURF using variables from the prediction step.
+- `sel_vars_df` – for each outer resample, the variables chosen by VSURF(interpretation and prediction steps) and elastic net plus the coefficients of the final refit.
 - `inner_perf` – fold-level metrics (ROC AUC, PR AUC, AUPRG, LogLoss, Brier score, MCC, calibration slope/intercept, etc.).
 
 The helper `outer_perf_nested_binary()` also prints stability tables showing how frequently each predictor is selected across outer folds and returns a tidy tibble of outer vs. inner performance metrics.
@@ -65,15 +73,21 @@ The helper `outer_perf_nested_binary()` also prints stability tables showing how
 
 ```r
 reg_results <- nested_elastic_continuous_outcome(
-  df,
-  outcome_var = "outcome",
-  cv_outer_folds = 5,
-  cv_outer_repeats = 20,
-  inner_cv_method = "repeatedcv",
-  inner_cv_folds = 5,
-  inner_cv_repeats = 20,
-  selection_rule = "best",
-  optim_metric = "RMSE"
+    df,
+    outcome_var = "outcome",
+    cv_outer_folds = 5,
+    cv_outer_repeats = 20,
+    seed = 1,
+    alpha_grid  = seq(0, 1, by = 0.1),
+    lambda_grid = 10^seq(-4, 1, length.out = 50),
+    ntree = 1000,
+    nforests = 20,
+    inner_cv_method = c("LOOCV", "repeatedcv"),
+    inner_cv_repeats = 20,
+    inner_cv_folds = 5,
+    selection_rule = c("best", "oneSE"),
+    optim_metric = c("RMSE", "MAE"),
+    data_transformation = c("YeoJohnson", "log")
 )
 
 inner_reg  <- inner_perf_nested_continuous(reg_results)
@@ -88,15 +102,21 @@ Use `final_model_with_coefs()` when you are ready to refit a model on all availa
 
 ```r
 final_bin <- final_model_with_coefs(
-  df,
-  outcome_var = "outcome",
-  positive_class = "Yes",
-  negative_class = "No",
-  family = "binomial",
-  cv_method = "repeatedcv",
-  cv_folds = 5,
-  cv_repeats = 20,
-  selection_rule = "best"
+df,
+outcome_var = "outcome",
+positive_class = "Yes",
+negative_class = "No",
+family = c("binomial", "gaussian"),
+cv_method = c("repeatedcv", "LOOCV"),
+cv_folds = 5,
+cv_repeats = 20,
+alpha_grid  = seq(0, 1, by = 0.1),
+lambda_grid = 10^seq(-4, 1, length.out = 50),
+ntree = 1000,
+nforests = 20,
+selection_rule = c("best", "oneSE"),
+cont_optim_metric = c("RMSE", "MAE"),
+data_transformation = c("log", "YeoJohnson")
 )
 
 # Access VSURF- and elastic-net-based coefficient sets
@@ -119,7 +139,7 @@ Set `family = "gaussian"` to obtain analogous continuous-outcome fits.
 
 ## Data Preparation Notes
 
-- Numeric predictors must be ≥ 0 to avoid failures in the `log1p` preprocessing step used by the recipes.
+- Numeric predictors must be ≥ 0 to avoid failures in the `log` preprocessing step used by the recipes. If `YeoJohnson` is selected then numeric values can have any sign.
 - Character predictors are converted to factors internally; ensure categorical values are coded consistently across rows.
 - Inspect `proj_transp.R` for a full cleaning pipeline that demonstrates missing-value imputation with `VIM::kNN`, low-variance filtering, correlation checks, and VSURF exploration prior to the nested CV workflow.
 
