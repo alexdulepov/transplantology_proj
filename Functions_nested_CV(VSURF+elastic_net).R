@@ -66,8 +66,9 @@ nested_elastic_binary_outcome <- function(
   # Only examine predictors; avoid evaluating < 0 on non-numerics
   pred_names <- setdiff(names(df), outcome_var)
   num_pred   <- vapply(df[pred_names], is.numeric, TRUE)
-  if (any(vapply(df[pred_names][num_pred], function(x) any(x < 0, na.rm = TRUE), TRUE))) {
-    stop("Some numeric predictors have negative values; log-transform (if selected) will fail.")
+  if (transformation_rule == "log" &&
+      any(vapply(df[pred_names][num_pred], function(x) any(x < 0, na.rm = TRUE), TRUE))) {
+    stop("Some numeric predictors have negative values; log-transform will fail.")
   }
   
   if (any(vapply(df[pred_names], is.character, TRUE))) {
@@ -748,9 +749,10 @@ nested_elastic_continuous_outcome <- function(
   # ---- Pre-checks ----
   pred_names <- setdiff(names(df), outcome_var)
   num_pred   <- vapply(df[pred_names], is.numeric, TRUE)
-  
-  if (any(vapply(df[pred_names][num_pred], function(x) any(x < 0, na.rm = TRUE), TRUE))) {
-    stop("Some numeric predictors have negative values; log-transform (if selected) will fail.")
+
+  if (transformation_rule == "log" &&
+      any(vapply(df[pred_names][num_pred], function(x) any(x < 0, na.rm = TRUE), TRUE))) {
+    stop("Some numeric predictors have negative values; log-transform will fail.")
   }
   
   if (any(vapply(df[pred_names], is.character, TRUE))) {
