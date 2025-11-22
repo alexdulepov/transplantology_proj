@@ -1367,14 +1367,14 @@ final_model_with_coefs <- function(df,
                                     nforests = 20,
                                     selection_rule = c("best", "oneSE"),
                                     cont_optim_metric = c("RMSE", "MAE"),
-                                    transformation_rule = c("log", "YeoJohnson")
+                                    data_transformation = c("log", "YeoJohnson")
                                    ) {
   
   family <- match.arg(family)
   cv_method <- match.arg(cv_method)
   selection_rule <- match.arg(selection_rule)
   metric <- match.arg(cont_optim_metric)
-  transformation_rule <- match.arg(transformation_rule)
+  transformation_rule <- match.arg(data_transformation)
   set.seed(1)
   
   if (selection_rule == "best") {
