@@ -264,10 +264,19 @@ nested_elastic_binary_outcome <- function(
     vs$call$y <- quote(object$y_train_saved)
     
     eps <- 1e-12
-    p_vsurf_inter <- predict(vs, newdata = x_test, #predictions at the interpretation step
-                             step = "interp",  type = "prob")[, positive_class]
-    p_vsurf_pred <- predict(vs, newdata = x_test,  #predictions at the prediction step
-                             step = "pred",  type = "prob")[, positive_class]                           
+    # probabilities at interpretation step (always available if vsurf ran)
+    p_vsurf_inter <- predict(vs, newdata = x_test, step = "interp", type = "prob")[, positive_class]    #predictions at the interpretation step
+    
+    # prediction step may be unavailable
+    if (is.null(vs$varselect.pred) || length(vs$varselect.pred) == 0) {
+      # fallback: use interpretation step as "pred"
+      p_vsurf_pred <- p_vsurf_inter
+      # or: p_vsurf_pred <- rep(NA_real_, nrow(x_test))
+    } else {
+      p_vsurf_pred <- predict(vs, newdata = x_test, step = "pred", type = "prob")[, positive_class]     #predictions at the prediction step
+    }
+    
+                       
     p_vsurf_inter <- pmin(pmax(p_vsurf_inter, eps), 1 - eps)
     p_vsurf_pred  <- pmin(pmax(p_vsurf_pred,  eps), 1 - eps)
     
@@ -960,7 +969,7 @@ nested_elastic_continuous_outcome <- function(
     # Predictions
     p_vsurf_inter <- predict(vs, newdata = x_test, step = "interp")
     
-    if (length(vsurf_sel_vars_pr) == 0) {
+    if (is.null(vs$varselect.pred) || length(vs$varselect.pred) == 0) {
       # fallback if pred-step selects nothing
       # option A: use interp preds
       p_vsurf_pred <- p_vsurf_inter
