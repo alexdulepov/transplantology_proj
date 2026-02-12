@@ -86,9 +86,7 @@ nested_elastic_binary_outcome <- function(
   make_recipe_vsurf <- function(vars_to_keep, data, outcome_var,transformation_rule) {
     all_pred <- setdiff(names(data), outcome_var)
     rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-      recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5)
+      recipes::step_string2factor(recipes::all_nominal_predictors()) 
     
     # conditional transformation
     if (transformation_rule == "log") {
@@ -103,7 +101,9 @@ nested_elastic_binary_outcome <- function(
     # continue with standardization
     rec <- rec |>
       recipes::step_center(recipes::all_numeric_predictors()) |>
-      recipes::step_scale(recipes::all_numeric_predictors())
+      recipes::step_scale(recipes::all_numeric_predictors()) |>
+      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5)
     
     if (!is.null(vars_to_keep)) {
       rec <- rec |>
@@ -125,9 +125,7 @@ nested_elastic_binary_outcome <- function(
   make_recipe_after_elas <- function(vars_to_keep, data, outcome_var,transformation_rule) {
     all_pred <- setdiff(names(data), outcome_var)
     rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-      recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) 
+      recipes::step_string2factor(recipes::all_nominal_predictors())
     
     # conditional transformation
     if (transformation_rule == "log") {
@@ -143,6 +141,8 @@ nested_elastic_binary_outcome <- function(
     rec <- rec |>
       recipes::step_center(recipes::all_numeric_predictors()) |>
       recipes::step_scale(recipes::all_numeric_predictors()) |>
+      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
       recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
     
     if (!is.null(vars_to_keep)) {
@@ -807,9 +807,7 @@ nested_elastic_continuous_outcome <- function(
   make_recipe_vsurf <- function(vars_to_keep, data, outcome_var,transformation_rule) {
     all_pred <- setdiff(names(data), outcome_var)
     rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-      recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5)
+      recipes::step_string2factor(recipes::all_nominal_predictors()) 
     
     # conditional transformation
     if (transformation_rule == "log") {
@@ -824,7 +822,9 @@ nested_elastic_continuous_outcome <- function(
     # continue with standardization
     rec <- rec |>
       recipes::step_center(recipes::all_numeric_predictors()) |>
-      recipes::step_scale(recipes::all_numeric_predictors())
+      recipes::step_scale(recipes::all_numeric_predictors()) |>
+      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5)
     
     if (!is.null(vars_to_keep)) {
       rec <- rec |>
@@ -842,9 +842,7 @@ nested_elastic_continuous_outcome <- function(
   make_recipe_after_elas <- function(vars_to_keep, data, outcome_var,transformation_rule) {
     all_pred <- setdiff(names(data), outcome_var)
     rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-      recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) 
+      recipes::step_string2factor(recipes::all_nominal_predictors()) 
     
     # conditional transformation
     if (transformation_rule == "log") {
@@ -860,6 +858,8 @@ nested_elastic_continuous_outcome <- function(
     rec <- rec |>
       recipes::step_center(recipes::all_numeric_predictors()) |>
       recipes::step_scale(recipes::all_numeric_predictors()) |>
+      recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+      recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
       recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
     if (!is.null(vars_to_keep)) {
       rec <- rec |>
@@ -1415,9 +1415,7 @@ final_model_with_coefs <- function(df,
     make_recipe_vsurf <- function(vars_to_keep, data, outcome_var,transformation_rule) {
       all_pred <- setdiff(names(data), outcome_var)
       rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-        recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5)
+        recipes::step_string2factor(recipes::all_nominal_predictors()) 
       
       # conditional transformation
       if (transformation_rule == "log") {
@@ -1432,7 +1430,9 @@ final_model_with_coefs <- function(df,
       # continue with standardization
       rec <- rec |>
         recipes::step_center(recipes::all_numeric_predictors()) |>
-        recipes::step_scale(recipes::all_numeric_predictors())
+        recipes::step_scale(recipes::all_numeric_predictors()) |>
+        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5)
       
       if (!is.null(vars_to_keep)) {
         rec <- rec |>
@@ -1454,9 +1454,7 @@ final_model_with_coefs <- function(df,
     make_recipe_after_elas <- function(vars_to_keep, data, outcome_var,transformation_rule) {
       all_pred <- setdiff(names(data), outcome_var)
       rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-        recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) 
+        recipes::step_string2factor(recipes::all_nominal_predictors()) 
       
       # conditional transformation
       if (transformation_rule == "log") {
@@ -1472,6 +1470,8 @@ final_model_with_coefs <- function(df,
       rec <- rec |>
         recipes::step_center(recipes::all_numeric_predictors()) |>
         recipes::step_scale(recipes::all_numeric_predictors()) |>
+        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
         recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
       
       if (!is.null(vars_to_keep)) {
@@ -1648,9 +1648,7 @@ final_model_with_coefs <- function(df,
     make_recipe_vsurf <- function(vars_to_keep, data, outcome_var,transformation_rule) {
       all_pred <- setdiff(names(data), outcome_var)
       rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-        recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5)
+        recipes::step_string2factor(recipes::all_nominal_predictors()) 
       
       # conditional transformation
       if (transformation_rule == "log") {
@@ -1665,7 +1663,9 @@ final_model_with_coefs <- function(df,
       # continue with standardization
       rec <- rec |>
         recipes::step_center(recipes::all_numeric_predictors()) |>
-        recipes::step_scale(recipes::all_numeric_predictors())
+        recipes::step_scale(recipes::all_numeric_predictors()) |>
+        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5)
       
       if (!is.null(vars_to_keep)) {
         rec <- rec |>
@@ -1687,9 +1687,7 @@ final_model_with_coefs <- function(df,
     make_recipe_after_elas <- function(vars_to_keep, data, outcome_var,transformation_rule) {
       all_pred <- setdiff(names(data), outcome_var)
       rec <- recipes::recipe(stats::reformulate(all_pred, response = outcome_var), data = data) |>
-        recipes::step_string2factor(recipes::all_nominal_predictors()) |>
-        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
-        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) 
+        recipes::step_string2factor(recipes::all_nominal_predictors()) 
       
       # conditional transformation
       if (transformation_rule == "log") {
@@ -1705,6 +1703,8 @@ final_model_with_coefs <- function(df,
       rec <- rec |>
         recipes::step_center(recipes::all_numeric_predictors()) |>
         recipes::step_scale(recipes::all_numeric_predictors()) |>
+        recipes::step_impute_mode(recipes::all_nominal_predictors()) |>
+        recipes::step_impute_knn(recipes::all_numeric_predictors(), neighbors = 5) |>
         recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
       
       if (!is.null(vars_to_keep)) {
