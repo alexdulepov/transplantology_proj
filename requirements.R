@@ -5,7 +5,7 @@
 install.packages(c(
   "VSURF","caret","glmnet","tidyverse","recipes","ModelMetrics","yardstick",
   "MLeval","CalibrationCurves","dcurves","readxl","statip","pheatmap","janitor",
-  "doParallel","devtools","ranger","kknn","foreach","iterators","VIM"
+  "doParallel","devtools","ranger","kknn","foreach","iterators"
 ))
 
 library(devtools)
@@ -27,7 +27,6 @@ library(dcurves)
 library(readxl)
 library(statip)
 library(pheatmap)
-library(VIM)
 library(janitor)
 
 
