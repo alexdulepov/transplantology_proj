@@ -55,6 +55,8 @@ results <- nested_elastic_binary_outcome(
     nominal_imputation = c("mode", "unknown"),
     add_missing_indicators = c("no", "yes"),
     remove_zero_variance = c("no", "yes"),
+    remove_correlated_predictors = c("no", "yes"),
+    correlation_threshold = 0.9,
     add_interactions = c("no", "yes"),
     interaction_vars = NULL,
     add_polynomials = c("no", "yes"),
@@ -72,7 +74,7 @@ outer_perf  <- outer_perf_nested_binary(results, positive_class = "Yes")
 - `prevalence` - the single prevalence value repeated for every binary reference prediction.
 - `selected_variables` - for each outer resample, the variables chosen by VSURF, elastic net, and lasso.
 - `tuning` - the actual elastic-net and lasso tuning candidates used in the run.
-- `preprocessing` - the imputation, missing-indicator, optional zero-variance removal, interaction, and polynomial settings used in the run.
+- `preprocessing` - the imputation, missing-indicator, optional zero-variance removal, optional correlated-predictor removal, interaction, and polynomial settings used in the run.
 
 The helper `outer_perf_nested_binary()` also prints stability tables showing how frequently each predictor is selected across outer folds and returns a tidy tibble of outer performance metrics.
 
@@ -100,6 +102,8 @@ multi_results <- nested_elastic_multiclass_outcome(
     nominal_imputation = c("mode", "unknown"),
     add_missing_indicators = c("no", "yes"),
     remove_zero_variance = c("no", "yes"),
+    remove_correlated_predictors = c("no", "yes"),
+    correlation_threshold = 0.9,
     add_interactions = c("no", "yes"),
     interaction_vars = NULL,
     add_polynomials = c("no", "yes"),
@@ -137,6 +141,8 @@ reg_results <- nested_elastic_continuous_outcome(
     nominal_imputation = c("mode", "unknown"),
     add_missing_indicators = c("no", "yes"),
     remove_zero_variance = c("no", "yes"),
+    remove_correlated_predictors = c("no", "yes"),
+    correlation_threshold = 0.9,
     add_interactions = c("no", "yes"),
     interaction_vars = NULL,
     add_polynomials = c("no", "yes"),
@@ -178,6 +184,8 @@ numeric_imputation = c("median", "bag", "linear"),
 nominal_imputation = c("mode", "unknown"),
 add_missing_indicators = c("no", "yes"),
 remove_zero_variance = c("no", "yes"),
+remove_correlated_predictors = c("no", "yes"),
+correlation_threshold = 0.9,
 add_interactions = c("no", "yes"),
 interaction_vars = NULL,
 add_polynomials = c("no", "yes"),
@@ -209,6 +217,7 @@ Set `family = "gaussian"` to obtain analogous continuous-outcome fits.
 - **Hyperparameter search** - use `hyperparam_search = "grid"` for the full alpha/lambda grid or `"random"` to sample `random_search_size` candidate combinations. Lasso is fit separately with `alpha = 1`; the elastic-net branch uses values in `alpha_grid` below 1.
 - **Imputation** - use `numeric_imputation = "median"`, `"bag"`, or `"linear"` for numeric predictors; use `nominal_imputation = "mode"` or `"unknown"` for nominal predictors; set `add_missing_indicators = "yes"` to add missingness indicators before imputation. Linear imputation uses complete numeric predictors as auxiliary variables and falls back to median imputation when none are available in a resample.
 - **Zero-variance predictors** - `remove_zero_variance = "no"` by default keeps all predictors in the recipe. Use `"yes"` only when you deliberately want the resampling recipe to drop predictors that are constant inside the training split.
+- **Correlated predictors** - set `remove_correlated_predictors = "yes"` to remove highly correlated predictors among the original numeric input columns only. Use `correlation_threshold` to control the absolute-correlation cutoff; the default is `0.9`.
 - **Interactions** - set `add_interactions = "yes"` and provide `interaction_vars = c("x1", "group", "x3")` to add pairwise interactions only among those predictors. Numeric and categorical predictors are supported; categorical predictors are dummy-expanded for `recipes::step_interact()` after imputation and before final scaling.
 - **Polynomials** - set `add_polynomials = "yes"` and provide `poly_vars = c("x1", "x2")` to create polynomial basis terms with `recipes::step_poly()`. Use `poly_degree` to control the degree; polynomial variables must be numeric.
 - **Post-selection refits** - use `post_selection_refit = "vsurf_only"` to refit only after VSURF selection, `"all"` to also refit after ElasticNet/Lasso selection, or `"none"` to return only the direct selected variables and penalized glmnet coefficients.
@@ -221,7 +230,7 @@ Set `family = "gaussian"` to obtain analogous continuous-outcome fits.
 
 - Numeric predictors must be >= 0 to avoid failures in the `log` preprocessing step used by the recipes. If `YeoJohnson` is selected then numeric values can have any sign.
 - Character predictors are converted to factors internally; ensure categorical values are coded consistently across rows.
-- Inspect `proj_transp.R` for the project-specific cleaning script. It now reports missingness and low-variance candidates as checks only; model imputation and optional zero-variance removal are controlled inside the resampling functions.
+- Inspect `proj_transp.R` for the project-specific cleaning script. It now reports missingness and low-variance candidates as checks only; model imputation, optional zero-variance removal, and optional correlated-predictor removal are controlled inside the resampling functions.
 
 ## Troubleshooting & Performance Tips
 

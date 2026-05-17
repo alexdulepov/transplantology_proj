@@ -47,6 +47,8 @@ results <- nested_elastic_binary_outcome(
   nominal_imputation = "unknown",
   add_missing_indicators = "yes",
   remove_zero_variance = "no",
+  remove_correlated_predictors = "no",
+  correlation_threshold = 0.9,
   add_interactions = "yes",
   interaction_vars = c("x1", "x2", "group"),
   add_polynomials = "yes",

@@ -107,13 +107,61 @@ add_imputation_steps <- function(rec,
   rec
 }
 
-finish_recipe_preprocessing <- function(rec, remove_zero_variance) {
+validate_correlation_threshold <- function(correlation_threshold) {
+  if (!is.numeric(correlation_threshold) ||
+      length(correlation_threshold) != 1 ||
+      is.na(correlation_threshold) ||
+      correlation_threshold <= 0 ||
+      correlation_threshold > 1) {
+    stop("correlation_threshold must be a single numeric value in the interval (0, 1].")
+  }
+
+  as.numeric(correlation_threshold)
+}
+
+add_original_numeric_correlation_filter <- function(rec,
+                                                    data,
+                                                    outcome_var,
+                                                    remove_correlated_predictors,
+                                                    correlation_threshold) {
+  if (remove_correlated_predictors == "no") {
+    return(rec)
+  }
+
+  # Restrict correlation filtering to predictors that were numeric in the
+  # original input data. Engineered terms are intentionally not candidates.
+  original_numeric_predictors <- numeric_predictor_names(data, outcome_var)
+  if (!length(original_numeric_predictors)) {
+    return(rec)
+  }
+
+  rec |>
+    recipes::step_corr(
+      tidyselect::any_of(original_numeric_predictors),
+      threshold = correlation_threshold
+    )
+}
+
+finish_recipe_preprocessing <- function(rec,
+                                        data,
+                                        outcome_var,
+                                        remove_zero_variance,
+                                        remove_correlated_predictors,
+                                        correlation_threshold) {
   # Zero-variance removal changes the design matrix, so keep it explicit.
   # If disabled, recipes may warn when a resample has constant engineered columns.
   if (remove_zero_variance == "yes") {
     rec <- rec |>
       recipes::step_zv(recipes::all_predictors())
   }
+
+  rec <- add_original_numeric_correlation_filter(
+    rec,
+    data,
+    outcome_var,
+    remove_correlated_predictors,
+    correlation_threshold
+  )
 
   rec |>
     recipes::step_center(recipes::all_numeric_predictors()) |>
@@ -227,6 +275,14 @@ format_interaction_setting <- function(add_interactions, interaction_vars) {
   }
 
   sprintf("yes (%s)", paste(interaction_vars, collapse = ", "))
+}
+
+format_correlation_setting <- function(remove_correlated_predictors, correlation_threshold) {
+  if (remove_correlated_predictors == "no") {
+    return("no")
+  }
+
+  sprintf("yes (threshold=%.3f)", correlation_threshold)
 }
 
 add_interaction_dummy_steps <- function(rec, add_interactions, categorical_interaction_vars) {
@@ -376,6 +432,8 @@ nested_elastic_binary_outcome <- function(
     nominal_imputation = c("mode", "unknown"),
     add_missing_indicators = c("no", "yes"),
     remove_zero_variance = c("no", "yes"),
+    remove_correlated_predictors = c("no", "yes"),
+    correlation_threshold = 0.9,
     add_interactions = c("no", "yes"),
     interaction_vars = NULL,
     add_polynomials = c("no", "yes"),
@@ -393,6 +451,8 @@ nested_elastic_binary_outcome <- function(
   nominal_imputation <- match.arg(nominal_imputation)
   add_missing_indicators <- match.arg(add_missing_indicators)
   remove_zero_variance <- match.arg(remove_zero_variance)
+  remove_correlated_predictors <- match.arg(remove_correlated_predictors)
+  correlation_threshold <- validate_correlation_threshold(correlation_threshold)
   add_interactions <- match.arg(add_interactions)
   add_polynomials <- match.arg(add_polynomials)
   interaction_vars <- validate_interaction_vars(df, outcome_var, add_interactions, interaction_vars)
@@ -439,11 +499,12 @@ nested_elastic_binary_outcome <- function(
     if (hyperparam_search == "random") sprintf(" (%d random candidates per glmnet model)", random_search_size) else ""
   ))
   message(sprintf(
-    "Imputation: numeric=%s, nominal=%s, missing indicators=%s, remove zero variance=%s, interactions=%s, polynomials=%s",
+    "Imputation: numeric=%s, nominal=%s, missing indicators=%s, remove zero variance=%s, remove correlated predictors=%s, interactions=%s, polynomials=%s",
     numeric_imputation,
     nominal_imputation,
     add_missing_indicators,
     remove_zero_variance,
+    format_correlation_setting(remove_correlated_predictors, correlation_threshold),
     format_interaction_setting(add_interactions, interaction_vars),
     format_poly_setting(add_polynomials, poly_vars, poly_degree)
   ))
@@ -500,7 +561,14 @@ nested_elastic_binary_outcome <- function(
     rec <- add_interaction_dummy_steps(rec, add_interactions, interaction_categorical_vars)
     rec <- add_interaction_steps(rec, add_interactions, interaction_vars, interaction_categorical_vars)
     rec <- add_polynomial_steps(rec, add_polynomials, poly_vars, poly_degree)
-    rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+    rec <- finish_recipe_preprocessing(
+      rec,
+      data,
+      outcome_var,
+      remove_zero_variance,
+      remove_correlated_predictors,
+      correlation_threshold
+    )
 
     rec
   }
@@ -535,7 +603,14 @@ nested_elastic_binary_outcome <- function(
       recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
     rec <- add_interaction_steps(rec, add_interactions, interaction_vars, interaction_categorical_vars)
     rec <- add_polynomial_steps(rec, add_polynomials, poly_vars, poly_degree)
-    rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+    rec <- finish_recipe_preprocessing(
+      rec,
+      data,
+      outcome_var,
+      remove_zero_variance,
+      remove_correlated_predictors,
+      correlation_threshold
+    )
 
     rec
   }
@@ -795,6 +870,8 @@ nested_elastic_binary_outcome <- function(
       nominal_imputation = nominal_imputation,
       add_missing_indicators = add_missing_indicators,
       remove_zero_variance = remove_zero_variance,
+      remove_correlated_predictors = remove_correlated_predictors,
+      correlation_threshold = correlation_threshold,
       add_interactions = add_interactions,
       interaction_vars = interaction_vars,
       add_polynomials = add_polynomials,
@@ -919,6 +996,8 @@ nested_elastic_multiclass_outcome <- function(
     nominal_imputation = c("mode", "unknown"),
     add_missing_indicators = c("no", "yes"),
     remove_zero_variance = c("no", "yes"),
+    remove_correlated_predictors = c("no", "yes"),
+    correlation_threshold = 0.9,
     add_interactions = c("no", "yes"),
     interaction_vars = NULL,
     add_polynomials = c("no", "yes"),
@@ -935,6 +1014,8 @@ nested_elastic_multiclass_outcome <- function(
   nominal_imputation <- match.arg(nominal_imputation)
   add_missing_indicators <- match.arg(add_missing_indicators)
   remove_zero_variance <- match.arg(remove_zero_variance)
+  remove_correlated_predictors <- match.arg(remove_correlated_predictors)
+  correlation_threshold <- validate_correlation_threshold(correlation_threshold)
   add_interactions <- match.arg(add_interactions)
   add_polynomials <- match.arg(add_polynomials)
   interaction_vars <- validate_interaction_vars(df, outcome_var, add_interactions, interaction_vars)
@@ -970,11 +1051,12 @@ nested_elastic_multiclass_outcome <- function(
     if (hyperparam_search == "random") sprintf(" (%d random candidates per glmnet model)", random_search_size) else ""
   ))
   message(sprintf(
-    "Imputation: numeric=%s, nominal=%s, missing indicators=%s, remove zero variance=%s, interactions=%s, polynomials=%s",
+    "Imputation: numeric=%s, nominal=%s, missing indicators=%s, remove zero variance=%s, remove correlated predictors=%s, interactions=%s, polynomials=%s",
     numeric_imputation,
     nominal_imputation,
     add_missing_indicators,
     remove_zero_variance,
+    format_correlation_setting(remove_correlated_predictors, correlation_threshold),
     format_interaction_setting(add_interactions, interaction_vars),
     format_poly_setting(add_polynomials, poly_vars, poly_degree)
   ))
@@ -1003,7 +1085,14 @@ nested_elastic_multiclass_outcome <- function(
     rec <- add_interaction_dummy_steps(rec, add_interactions, interaction_categorical_vars)
     rec <- add_interaction_steps(rec, add_interactions, interaction_vars, interaction_categorical_vars)
     rec <- add_polynomial_steps(rec, add_polynomials, poly_vars, poly_degree)
-    finish_recipe_preprocessing(rec, remove_zero_variance)
+    finish_recipe_preprocessing(
+      rec,
+      data,
+      outcome_var,
+      remove_zero_variance,
+      remove_correlated_predictors,
+      correlation_threshold
+    )
   }
 
   make_recipe_glmnet_design <- function(data, outcome_var, transformation_rule) {
@@ -1030,7 +1119,14 @@ nested_elastic_multiclass_outcome <- function(
       recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
     rec <- add_interaction_steps(rec, add_interactions, interaction_vars, interaction_categorical_vars)
     rec <- add_polynomial_steps(rec, add_polynomials, poly_vars, poly_degree)
-    finish_recipe_preprocessing(rec, remove_zero_variance)
+    finish_recipe_preprocessing(
+      rec,
+      data,
+      outcome_var,
+      remove_zero_variance,
+      remove_correlated_predictors,
+      correlation_threshold
+    )
   }
 
   normalize_prob_matrix <- function(prob) {
@@ -1249,6 +1345,8 @@ nested_elastic_multiclass_outcome <- function(
       nominal_imputation = nominal_imputation,
       add_missing_indicators = add_missing_indicators,
       remove_zero_variance = remove_zero_variance,
+      remove_correlated_predictors = remove_correlated_predictors,
+      correlation_threshold = correlation_threshold,
       add_interactions = add_interactions,
       interaction_vars = interaction_vars,
       add_polynomials = add_polynomials,
@@ -1364,6 +1462,8 @@ nested_elastic_continuous_outcome <- function(
     nominal_imputation = c("mode", "unknown"),
     add_missing_indicators = c("no", "yes"),
     remove_zero_variance = c("no", "yes"),
+    remove_correlated_predictors = c("no", "yes"),
+    correlation_threshold = 0.9,
     add_interactions = c("no", "yes"),
     interaction_vars = NULL,
     add_polynomials = c("no", "yes"),
@@ -1382,6 +1482,8 @@ nested_elastic_continuous_outcome <- function(
   nominal_imputation <- match.arg(nominal_imputation)
   add_missing_indicators <- match.arg(add_missing_indicators)
   remove_zero_variance <- match.arg(remove_zero_variance)
+  remove_correlated_predictors <- match.arg(remove_correlated_predictors)
+  correlation_threshold <- validate_correlation_threshold(correlation_threshold)
   add_interactions <- match.arg(add_interactions)
   add_polynomials <- match.arg(add_polynomials)
   interaction_vars <- validate_interaction_vars(df, outcome_var, add_interactions, interaction_vars)
@@ -1431,11 +1533,12 @@ nested_elastic_continuous_outcome <- function(
     if (hyperparam_search == "random") sprintf(" (%d random candidates per glmnet model)", random_search_size) else ""
   ))
   message(sprintf(
-    "Imputation: numeric=%s, nominal=%s, missing indicators=%s, remove zero variance=%s, interactions=%s, polynomials=%s",
+    "Imputation: numeric=%s, nominal=%s, missing indicators=%s, remove zero variance=%s, remove correlated predictors=%s, interactions=%s, polynomials=%s",
     numeric_imputation,
     nominal_imputation,
     add_missing_indicators,
     remove_zero_variance,
+    format_correlation_setting(remove_correlated_predictors, correlation_threshold),
     format_interaction_setting(add_interactions, interaction_vars),
     format_poly_setting(add_polynomials, poly_vars, poly_degree)
   ))
@@ -1481,7 +1584,14 @@ nested_elastic_continuous_outcome <- function(
     rec <- add_interaction_dummy_steps(rec, add_interactions, interaction_categorical_vars)
     rec <- add_interaction_steps(rec, add_interactions, interaction_vars, interaction_categorical_vars)
     rec <- add_polynomial_steps(rec, add_polynomials, poly_vars, poly_degree)
-    rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+    rec <- finish_recipe_preprocessing(
+      rec,
+      data,
+      outcome_var,
+      remove_zero_variance,
+      remove_correlated_predictors,
+      correlation_threshold
+    )
 
     rec
   }
@@ -1514,7 +1624,14 @@ nested_elastic_continuous_outcome <- function(
       recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
     rec <- add_interaction_steps(rec, add_interactions, interaction_vars, interaction_categorical_vars)
     rec <- add_polynomial_steps(rec, add_polynomials, poly_vars, poly_degree)
-    rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+    rec <- finish_recipe_preprocessing(
+      rec,
+      data,
+      outcome_var,
+      remove_zero_variance,
+      remove_correlated_predictors,
+      correlation_threshold
+    )
     rec
   }
 
@@ -1753,6 +1870,8 @@ nested_elastic_continuous_outcome <- function(
       nominal_imputation = nominal_imputation,
       add_missing_indicators = add_missing_indicators,
       remove_zero_variance = remove_zero_variance,
+      remove_correlated_predictors = remove_correlated_predictors,
+      correlation_threshold = correlation_threshold,
       add_interactions = add_interactions,
       interaction_vars = interaction_vars,
       add_polynomials = add_polynomials,
@@ -1852,6 +1971,8 @@ final_model_with_coefs <- function(df,
                                     nominal_imputation = c("mode", "unknown"),
                                     add_missing_indicators = c("no", "yes"),
                                     remove_zero_variance = c("no", "yes"),
+                                    remove_correlated_predictors = c("no", "yes"),
+                                    correlation_threshold = 0.9,
                                     add_interactions = c("no", "yes"),
                                     interaction_vars = NULL,
                                     add_polynomials = c("no", "yes"),
@@ -1870,6 +1991,8 @@ final_model_with_coefs <- function(df,
   nominal_imputation <- match.arg(nominal_imputation)
   add_missing_indicators <- match.arg(add_missing_indicators)
   remove_zero_variance <- match.arg(remove_zero_variance)
+  remove_correlated_predictors <- match.arg(remove_correlated_predictors)
+  correlation_threshold <- validate_correlation_threshold(correlation_threshold)
   add_interactions <- match.arg(add_interactions)
   add_polynomials <- match.arg(add_polynomials)
   post_selection_refit <- match.arg(post_selection_refit)
@@ -1898,11 +2021,12 @@ final_model_with_coefs <- function(df,
   ))
   message(sprintf("Post-selection refit: %s", post_selection_refit))
   message(sprintf(
-    "Imputation: numeric=%s, nominal=%s, missing indicators=%s, remove zero variance=%s, interactions=%s, polynomials=%s",
+    "Imputation: numeric=%s, nominal=%s, missing indicators=%s, remove zero variance=%s, remove correlated predictors=%s, interactions=%s, polynomials=%s",
     numeric_imputation,
     nominal_imputation,
     add_missing_indicators,
     remove_zero_variance,
+    format_correlation_setting(remove_correlated_predictors, correlation_threshold),
     format_interaction_setting(add_interactions, interaction_vars),
     format_poly_setting(add_polynomials, poly_vars, poly_degree)
   ))
@@ -1987,7 +2111,14 @@ final_model_with_coefs <- function(df,
         rec <- rec |>
           recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(selected_vars))
       }
-      rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+      rec <- finish_recipe_preprocessing(
+        rec,
+        data,
+        outcome_var,
+        remove_zero_variance,
+        remove_correlated_predictors,
+        correlation_threshold
+      )
       rec
     }
 
@@ -1997,7 +2128,14 @@ final_model_with_coefs <- function(df,
       stopifnot(!is.null(selected_vars))  # only for selected-var refits
       rec <- make_recipe_vsurf(selected_vars, data, outcome_var, transformation_rule) |>
         recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
-      rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+      rec <- finish_recipe_preprocessing(
+        rec,
+        data,
+        outcome_var,
+        remove_zero_variance,
+        remove_correlated_predictors,
+        correlation_threshold
+      )
       rec
     }
 
@@ -2044,7 +2182,14 @@ final_model_with_coefs <- function(df,
         rec <- rec |>
           recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(selected_vars))
       }
-      rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+      rec <- finish_recipe_preprocessing(
+        rec,
+        data,
+        outcome_var,
+        remove_zero_variance,
+        remove_correlated_predictors,
+        correlation_threshold
+      )
       rec
     }
 
@@ -2257,6 +2402,8 @@ final_model_with_coefs <- function(df,
         nominal_imputation = nominal_imputation,
         add_missing_indicators = add_missing_indicators,
         remove_zero_variance = remove_zero_variance,
+        remove_correlated_predictors = remove_correlated_predictors,
+        correlation_threshold = correlation_threshold,
         add_interactions = add_interactions,
         interaction_vars = interaction_vars,
         add_polynomials = add_polynomials,
@@ -2308,7 +2455,14 @@ final_model_with_coefs <- function(df,
         rec <- rec |>
           recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(selected_vars))
       }
-      rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+      rec <- finish_recipe_preprocessing(
+        rec,
+        data,
+        outcome_var,
+        remove_zero_variance,
+        remove_correlated_predictors,
+        correlation_threshold
+      )
       rec
     }
 
@@ -2318,7 +2472,14 @@ final_model_with_coefs <- function(df,
       stopifnot(!is.null(selected_vars))  # only for selected-var refits
       rec <- make_recipe_vsurf(selected_vars, data, outcome_var, transformation_rule) |>
         recipes::step_dummy(recipes::all_nominal_predictors(), one_hot = FALSE)
-      rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+      rec <- finish_recipe_preprocessing(
+        rec,
+        data,
+        outcome_var,
+        remove_zero_variance,
+        remove_correlated_predictors,
+        correlation_threshold
+      )
       rec
     }
 
@@ -2365,7 +2526,14 @@ final_model_with_coefs <- function(df,
         rec <- rec |>
           recipes::step_rm(recipes::all_predictors(), -tidyselect::any_of(selected_vars))
       }
-      rec <- finish_recipe_preprocessing(rec, remove_zero_variance)
+      rec <- finish_recipe_preprocessing(
+        rec,
+        data,
+        outcome_var,
+        remove_zero_variance,
+        remove_correlated_predictors,
+        correlation_threshold
+      )
       rec
     }
 
@@ -2576,6 +2744,8 @@ final_model_with_coefs <- function(df,
         nominal_imputation = nominal_imputation,
         add_missing_indicators = add_missing_indicators,
         remove_zero_variance = remove_zero_variance,
+        remove_correlated_predictors = remove_correlated_predictors,
+        correlation_threshold = correlation_threshold,
         add_interactions = add_interactions,
         interaction_vars = interaction_vars,
         add_polynomials = add_polynomials,
