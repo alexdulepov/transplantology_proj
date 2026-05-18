@@ -24,6 +24,16 @@ source("requirements.R")
 
 `requirements.R` installs CRAN dependencies (VSURF, caret, glmnet, tidyverse, recipes, ModelMetrics, yardstick, MLeval, CalibrationCurves, dcurves, readxl, statip, pheatmap, janitor, doParallel, devtools, ranger, kknn, foreach, iterators) and the `prg` package from GitHub before loading everything into the session.
 
+## Reproducibility
+
+The analysis environment used for the final workflow is documented in `sessionInfo.txt`.
+
+To install the required R packages, run:
+
+```r
+source("requirements.R")
+```
+
 ## Usage
 
 ### 1. Binary outcome workflow
@@ -260,7 +270,7 @@ The raw data are not included in this repository because they contain study part
 
 ## License
 
-This code is provided for educational and research purposes.  Please ensure compliance with the licenses of the included packages.
+This project is licensed under the MIT License. See `LICENSE` for details.
 
 ## Support
 
