@@ -9,8 +9,8 @@ This repository contains R utilities for repeated outer cross-validation that co
   - `outer_perf_nested_*()` helpers that turn resampling objects into tidy performance summaries.
   - `final_model_with_coefs()` to fit full-data VSURF, elastic-net, and lasso models, return direct penalized glmnet coefficients, and optionally run post-selection refits.
 - `demo_usage.R` - minimal synthetic example that sources the core functions and runs the binary workflow end-to-end.
-- `proj_transp.R` - end-to-end analysis script for a transplant cytokine dataset (data import, cleaning, missingness/variance checks, exploratory analysis, and VSURF/elastic-net modelling).
-- `requirements.R` - installs and loads the full package stack required by the above scripts.
+- `covid_ev_don_models.R` - end-to-end analysis script for the COVID EV donor dataset. It imports and cleans the source workbook, performs missingness/correlation/variance/outlier checks, visualises predictor distributions, runs the binary nested-CV workflow, evaluates ROC/calibration, and fits the final full-data model.
+- `requirements.R` - installs and loads the core package stack used by the reusable modelling functions and demo workflow.
 
 ## Installation
 
@@ -211,6 +211,19 @@ Set `family = "gaussian"` to obtain analogous continuous-outcome fits.
 
 `demo_usage.R` generates a toy binary dataset, runs `nested_elastic_binary_outcome()`, and produces summaries/plots illustrating how to interrogate the returned object.  Use it as a quick sanity check that all dependencies are installed.
 
+### 6. COVID EV donor analysis script
+
+`covid_ev_don_models.R` is the repository's current project-specific workflow. It:
+
+- reads `covid_ev_don_orig.xlsx` from a local Excel path,
+- recodes the binary outcome to `No` / `Yes` and sex to `Male` / `Female`,
+- removes rows with extensive missingness and performs correlation, near-zero-variance, distribution, and outlier checks,
+- runs the binary nested-CV workflow with Yeo-Johnson preprocessing, median numeric imputation, unknown-level nominal imputation, and optional zero-variance removal,
+- evaluates Lasso predictions with ROC and calibration plots,
+- fits a final binomial model using `final_model_with_coefs()`.
+
+The input path is currently hard-coded inside the script, so update the `read_xlsx()` path before running it on another machine.
+
 ## Customisation Highlights
 
 - **Variable selection** - toggle VSURF tree counts (`ntree`, `nforests`) and let elastic net or lasso perform their own selection by adjusting `alpha_grid`/`lambda_grid`.
@@ -230,13 +243,13 @@ Set `family = "gaussian"` to obtain analogous continuous-outcome fits.
 
 - Numeric predictors must be >= 0 to avoid failures in the `log` preprocessing step used by the recipes. If `YeoJohnson` is selected then numeric values can have any sign.
 - Character predictors are converted to factors internally; ensure categorical values are coded consistently across rows.
-- Inspect `proj_transp.R` for the project-specific cleaning script. It now reports missingness and low-variance candidates as checks only; model imputation, optional zero-variance removal, and optional correlated-predictor removal are controlled inside the resampling functions.
+- Inspect `covid_ev_don_models.R` for the current project-specific cleaning workflow. It includes explicit data-cleaning decisions before modelling, while the reusable modelling functions still control recipe-based imputation, optional zero-variance removal, and optional correlated-predictor removal during resampling.
 
 ## Troubleshooting & Performance Tips
 
 1. Ensure the outcome column contains both class labels specified via `positive_class`/`negative_class` before fitting binary models.
 2. Large nested CV runs (many repeats or high-dimensional predictors) can be computationally intensive; reduce outer repeats or shrink the hyper-parameter grid when prototyping.
-3. If VSURF fails because of limited variability, adjust or remove near-zero-variance predictors (see `proj_transp.R` for an example workflow).
+3. If VSURF fails because of limited variability, adjust or remove near-zero-variance predictors (see `covid_ev_don_models.R` for an example workflow).
 4. When using the GitHub-hosted `prg` package, confirm that `devtools` is available and that you have internet access during installation.
 
 ## License

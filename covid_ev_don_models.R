@@ -19,11 +19,7 @@ library(dcurves)
 library(readxl)
 library(statip)
 library(pheatmap)
-library(VIM)
 library(janitor)
-library(report)
-library(missForest)
-library(robustbase)
 set.seed(123)
 
 source("Functions_nested_CV(VSURF+elastic_net).R")
@@ -128,7 +124,6 @@ covid_mod <- covid_mod %>%
 nzv_b <- check_variance(covid_mod, "Covid")
 
 # ---- Section 3c: Distributions by outcome group (boxplots) -------------------
-library(robustbase)
 
 plot_distributions <- function(df, title = "") {
   df |>
