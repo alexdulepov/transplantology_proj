@@ -22,12 +22,14 @@ library(pheatmap)
 library(janitor)
 set.seed(123)
 
-source("Functions_nested_CV(VSURF+elastic_net).R")
+source("nested_cv_vsurf_elastic_net.R")
+
+# Raw data are available from the corresponding author on reasonable request.
+# Place the source workbook at data/covid_ev_don_orig.xlsx or update data_path.
+data_path <- "data/covid_ev_don_orig.xlsx"
+df_ev <- readxl::read_xlsx(data_path, sheet = 1)
 
 # Read xlsx and recode the outcome
-
-df_ev = read_xlsx("D:/Packages/artur/covid_ev_don_orig.xlsx",
-               sheet = 1) 
 
 df_cov_clean = df_ev %>%
   clean_names() %>%

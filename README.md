@@ -1,10 +1,12 @@
+[![DOI](https://zenodo.org/badge/1022210779.svg)](https://doi.org/10.5281/zenodo.20277106)
+
 # Nested Cross-Validation with VSURF and Elastic Net
 
 This repository contains R utilities for repeated outer cross-validation that compare direct VSURF predictions, tuned elastic-net/lasso models, and constant reference models. Workflows are provided for binary, multiclass, and continuous outcomes, together with helpers for summarising outer performance and extracting final coefficient sets.
 
 ## Repository Contents
 
-- `Functions_nested_CV(VSURF+elastic_net).R` - core implementation. Includes:
+- `nested_cv_vsurf_elastic_net.R` - core implementation. Includes:
   - `nested_elastic_binary_outcome()`, `nested_elastic_multiclass_outcome()`, and `nested_elastic_continuous_outcome()` for repeated nested resampling.
   - `outer_perf_nested_*()` helpers that turn resampling objects into tidy performance summaries.
   - `final_model_with_coefs()` to fit full-data VSURF, elastic-net, and lasso models, return direct penalized glmnet coefficients, and optionally run post-selection refits.
@@ -27,7 +29,7 @@ source("requirements.R")
 ### 1. Binary outcome workflow
 
 ```r
-source("Functions_nested_CV(VSURF+elastic_net).R")
+source("nested_cv_vsurf_elastic_net.R")
 
 # Data frame 'df' must contain the outcome column plus predictors
 # If using data_transformation = "log", numeric predictors must be non-negative.
@@ -244,6 +246,10 @@ The input path is currently hard-coded inside the script, so update the `read_xl
 - Numeric predictors must be >= 0 to avoid failures in the `log` preprocessing step used by the recipes. If `YeoJohnson` is selected then numeric values can have any sign.
 - Character predictors are converted to factors internally; ensure categorical values are coded consistently across rows.
 - Inspect `covid_ev_don_models.R` for the current project-specific cleaning workflow. It includes explicit data-cleaning decisions before modelling, while the reusable modelling functions still control recipe-based imputation, optional zero-variance removal, and optional correlated-predictor removal during resampling.
+
+## Data availability
+
+The raw data are not included in this repository because they contain study participant data. Data are available from the corresponding author on reasonable request. The repository provides the analysis workflow and reusable modelling functions.
 
 ## Troubleshooting & Performance Tips
 

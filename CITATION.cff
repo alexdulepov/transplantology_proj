@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+title: "COVID-19 EV Biomarker Prediction"
+message: "If you use this code, please cite the archived Zenodo version."
+type: software
+authors:
+  - family-names: Dulepov
+    given-names: Aleksandr
+repository-code: "https://github.com/alexdulepov/covid-ev-biomarker-prediction"
+version: "1.0.0"
+date-released: "2026-05-19"

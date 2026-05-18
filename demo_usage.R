@@ -1,6 +1,6 @@
 # Minimal demo for the binary outer-CV workflow.
 
-source("Functions_nested_CV(VSURF+elastic_net).R")
+source("nested_cv_vsurf_elastic_net.R")
 
 set.seed(123)
 n_samples <- 80
